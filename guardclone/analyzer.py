@@ -13,7 +13,12 @@ from .sandbox import infer_sandbox_events
 MAX_FILE_BYTES = 300_000
 
 
-def scan_profile(profile: RepoProfile, ai_provider: str = "off", ai_model: str = "gemini-2.5-flash") -> ScanReport:
+def scan_profile(
+    profile: RepoProfile,
+    ai_provider: str = "off",
+    ai_model: str = "gemini-2.5-flash",
+    gemini_command: str | None = None,
+) -> ScanReport:
     started = time.perf_counter()
     files = _iter_files(profile.local_path)
     profile.files_scanned = len(files)
@@ -42,7 +47,16 @@ def scan_profile(profile: RepoProfile, ai_provider: str = "off", ai_model: str =
     targets = sorted(_extract_targets(findings))
     risk_score = _score(profile, findings, sandbox_events)
     fallback_judgement = _judge_intent(risk_score, findings, sandbox_events, targets, profile)
-    llm_result = judge_with_llm(ai_provider, ai_model, risk_score, profile, findings, sandbox_events, fallback_judgement)
+    llm_result = judge_with_llm(
+        ai_provider,
+        ai_model,
+        risk_score,
+        profile,
+        findings,
+        sandbox_events,
+        fallback_judgement,
+        gemini_command=gemini_command,
+    )
     risk_score = max(0, min(100, risk_score + llm_result.risk_adjustment))
     verdict, recommendation = _verdict(risk_score)
     elapsed = (time.perf_counter() - started) * 1000
