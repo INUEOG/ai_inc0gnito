@@ -1,0 +1,8 @@
+{
+  "name": "theme-preview",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node scripts/bootstrap.js",
+    "start": "node index.js"
+  }
+}
