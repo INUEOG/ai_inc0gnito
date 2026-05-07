@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     scan = sub.add_parser("scan", help="로컬 경로 또는 GitHub URL 검사")
     scan.add_argument("source", help="검사할 로컬 경로 또는 GitHub URL")
     scan.add_argument("--json", action="store_true", help="JSON 리포트 출력")
-    scan.add_argument("--ai", choices=["off", "auto", "gemini"], default="gemini", help="LLM 판단 사용 방식")
+    scan.add_argument("--ai", choices=["off", "auto", "gemini", "gemini-api"], default="gemini", help="LLM 판단 사용 방식")
     scan.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
     scan.add_argument("--gemini-command", help="Gemini CLI 실행 명령 직접 지정")
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         help="ask는 위험 판정 시 사용자에게 3가지 선택지를 묻습니다.",
     )
     clone.add_argument("--json", action="store_true", help="JSON 리포트 출력")
-    clone.add_argument("--ai", choices=["off", "auto", "gemini"], default="gemini", help="LLM 판단 사용 방식")
+    clone.add_argument("--ai", choices=["off", "auto", "gemini", "gemini-api"], default="gemini", help="LLM 판단 사용 방식")
     clone.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
     clone.add_argument("--gemini-command", help="Gemini CLI 실행 명령 직접 지정")
 
@@ -102,6 +102,10 @@ def _print_doctor() -> int:
     print(f"GOOGLE_API_KEY 설정: {'예' if diagnostics['google_api_key_set'] else '아니오'}")
     print(f"GUARDCLONE_GEMINI_CMD: {diagnostics['guardclone_gemini_cmd'] or '없음'}")
     print(f"GuardClone이 사용할 명령: {diagnostics['gemini_command'] or '없음'}")
+    print(f"우선 사용할 LLM 경로: {diagnostics['preferred_llm_path']}")
+    if diagnostics["gemini_api_key_set"] or diagnostics["google_api_key_set"]:
+        print("\n상태: Gemini API를 직접 호출할 준비가 되어 있습니다.")
+        return 0
     if diagnostics["gemini_command"]:
         print("\n상태: Gemini CLI를 호출할 준비가 되어 있습니다.")
         return 0

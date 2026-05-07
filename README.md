@@ -11,7 +11,7 @@ Gemini CLI 기반 LLM 의도 판단을 합산해 clone 진행 여부를 결정�
 ```powershell
 py -m guardclone demo
 py -m guardclone doctor
-py -m guardclone scan .\demo_repos\malicious_repo --ai gemini
+py -m guardclone scan .\demo_repos\malicious_repo --ai gemini-api
 py -m guardclone clone .\demo_repos\suspicious_repo .\safe-copy
 py -m guardclone eval .\demo_repos
 ```
@@ -25,8 +25,13 @@ py -m guardclone eval .\demo_repos
 3. 위험 감수 후 진행
 ```
 
-Gemini CLI가 설치되어 있으면 `--ai gemini`가 실제 LLM 의도 판단을 추가합니다.
-설치되어 있지 않거나 실패하면 룰 기반/AST/샌드박스형 분석 결과로 자동 대체합니다.
+`GEMINI_API_KEY` 또는 `GOOGLE_API_KEY`가 설정되어 있으면 Gemini REST API를 직접 호출합니다.
+API 키가 없으면 Gemini CLI를 시도하고, 둘 다 실패하면 룰 기반/AST/샌드박스형 분석 결과로 자동 대체합니다.
+
+```powershell
+$env:GEMINI_API_KEY="발급받은_API_KEY"
+py -m guardclone scan .\demo_repos\malicious_repo --ai gemini-api
+```
 
 Gemini가 PATH에 잡히지 않는 Windows 환경에서는 다음처럼 직접 명령을 지정할 수 있습니다.
 
