@@ -23,7 +23,7 @@ def evaluate_dataset(root: Path) -> dict:
     for name, expected in labels.items():
         source = root / name
         started = time.perf_counter()
-        report = scan_profile(collect_source(str(source)))
+        report = scan_profile(collect_source(str(source)), ai_provider="off")
         durations.append((time.perf_counter() - started) * 1000)
         rows.append(
             {

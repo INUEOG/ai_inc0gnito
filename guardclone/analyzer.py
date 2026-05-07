@@ -5,6 +5,7 @@ import json
 import time
 from pathlib import Path
 
+from .llm import judge_with_llm
 from .models import Finding, RepoProfile, ScanReport
 from .rules import RULES, SENSITIVE_TARGETS, is_auto_exec_path
 from .sandbox import infer_sandbox_events
@@ -12,7 +13,7 @@ from .sandbox import infer_sandbox_events
 MAX_FILE_BYTES = 300_000
 
 
-def scan_profile(profile: RepoProfile) -> ScanReport:
+def scan_profile(profile: RepoProfile, ai_provider: str = "off", ai_model: str = "gemini-2.5-flash") -> ScanReport:
     started = time.perf_counter()
     files = _iter_files(profile.local_path)
     profile.files_scanned = len(files)
@@ -40,8 +41,10 @@ def scan_profile(profile: RepoProfile) -> ScanReport:
     sandbox_events = infer_sandbox_events(profile.local_path, executable)
     targets = sorted(_extract_targets(findings))
     risk_score = _score(profile, findings, sandbox_events)
+    fallback_judgement = _judge_intent(risk_score, findings, sandbox_events, targets, profile)
+    llm_result = judge_with_llm(ai_provider, ai_model, risk_score, profile, findings, sandbox_events, fallback_judgement)
+    risk_score = max(0, min(100, risk_score + llm_result.risk_adjustment))
     verdict, recommendation = _verdict(risk_score)
-    ai_judgement = _judge_intent(risk_score, findings, sandbox_events, targets, profile)
     elapsed = (time.perf_counter() - started) * 1000
 
     return ScanReport(
@@ -52,8 +55,12 @@ def scan_profile(profile: RepoProfile) -> ScanReport:
         verdict=verdict,
         recommendation=recommendation,
         exfiltration_targets=targets,
-        ai_judgement=ai_judgement,
+        ai_judgement=llm_result.judgement,
         elapsed_ms=elapsed,
+        ai_provider=llm_result.provider,
+        ai_model=llm_result.model,
+        ai_used=llm_result.used,
+        ai_error=llm_result.error,
     )
 
 

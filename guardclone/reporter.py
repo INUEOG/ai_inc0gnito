@@ -21,8 +21,11 @@ def render_text(report: ScanReport) -> str:
         f"판정: {report.verdict}",
         f"권장 조치: {report.recommendation}",
         "",
+        f"AI 모델: {report.ai_provider} / {report.ai_model} / {'사용' if report.ai_used else '미사용'}",
         f"AI 판단: {report.ai_judgement}",
     ]
+    if report.ai_error:
+        lines.append(f"AI 연동 참고: {report.ai_error}")
 
     if report.exfiltration_targets:
         lines.extend(["", "탈취 가능 정보"])

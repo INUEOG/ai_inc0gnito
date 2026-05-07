@@ -13,6 +13,9 @@ from .evaluator import evaluate_dataset
 from .reporter import render_json, render_text
 
 
+RISKY_VERDICTS = {"WARN", "QUARANTINE", "BLOCK"}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="guardclone", description="clone 전 GitHub 개인정보 탈취 위험 검사 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -20,17 +23,21 @@ def main(argv: list[str] | None = None) -> int:
     scan = sub.add_parser("scan", help="로컬 경로 또는 GitHub URL 검사")
     scan.add_argument("source", help="검사할 로컬 경로 또는 GitHub URL")
     scan.add_argument("--json", action="store_true", help="JSON 리포트 출력")
+    scan.add_argument("--ai", choices=["off", "auto", "gemini"], default="gemini", help="LLM 판단 사용 방식")
+    scan.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
 
-    clone = sub.add_parser("clone", help="검사 후 정책에 따라 clone 또는 격리 clone 수행")
+    clone = sub.add_parser("clone", help="검사 후 사용자 선택에 따라 clone 수행")
     clone.add_argument("source", help="clone할 로컬 경로 또는 GitHub URL")
     clone.add_argument("destination", help="결과를 받을 폴더")
     clone.add_argument(
         "--choice",
-        choices=["auto", "block", "clean", "force"],
-        default="auto",
-        help="auto는 판정에 따라 차단/격리/진행을 자동 선택",
+        choices=["ask", "auto", "block", "clean", "force"],
+        default="ask",
+        help="ask는 위험 판정 시 사용자에게 3가지 선택지를 묻습니다.",
     )
     clone.add_argument("--json", action="store_true", help="JSON 리포트 출력")
+    clone.add_argument("--ai", choices=["off", "auto", "gemini"], default="gemini", help="LLM 판단 사용 방식")
+    clone.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
 
     demo = sub.add_parser("demo", help="심사용 데모 레포지토리 생성")
     demo.add_argument("--base", default=".", help="데모 폴더를 만들 위치")
@@ -44,32 +51,20 @@ def main(argv: list[str] | None = None) -> int:
         root = create_demo_repos(Path(args.base).resolve())
         print(f"데모 데이터셋 생성 완료: {root}")
         print(f"악성 시나리오 검사: py -m guardclone scan {root / 'malicious_repo'}")
+        print(f"인터랙티브 clone 데모: py -m guardclone clone {root / 'suspicious_repo'} safe-copy")
         print(f"지표 평가: py -m guardclone eval {root}")
         return 0
 
     if args.command == "scan":
-        report = scan_profile(collect_source(args.source))
+        report = scan_profile(collect_source(args.source), ai_provider=args.ai, ai_model=args.gemini_model)
         print(render_json(report) if args.json else render_text(report))
         return 1 if report.verdict == "BLOCK" else 0
 
     if args.command == "clone":
-        report = scan_profile(collect_source(args.source))
-        action = _resolve_action(report.verdict, args.choice)
-        if action == "block":
-            print(render_json(report) if args.json else render_text(report))
-            print("\n결과: 위험도가 높아 clone을 차단했습니다.")
-            return 1
-        destination = Path(args.destination).resolve()
-        if action == "clean":
-            _copy_without_risky_files(report.profile.local_path, destination, _risky_files(report))
-            suffix = "위험 파일을 제외하고 격리 clone을 완료했습니다."
-        else:
-            _clone_or_copy(args.source, report.profile.local_path, destination)
-            suffix = "검사 후 clone을 완료했습니다."
+        report = scan_profile(collect_source(args.source), ai_provider=args.ai, ai_model=args.gemini_model)
         print(render_json(report) if args.json else render_text(report))
-        print(f"\n결과: {suffix}")
-        print(f"위치: {destination}")
-        return 0
+        action = _resolve_action(report.verdict, args.choice)
+        return _perform_clone_action(args.source, args.destination, report, action)
 
     if args.command == "eval":
         result = evaluate_dataset(Path(args.dataset).resolve())
@@ -80,13 +75,58 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _resolve_action(verdict: str, choice: str) -> str:
-    if choice != "auto":
-        return {"block": "block", "clean": "clean", "force": "force"}[choice]
-    if verdict == "BLOCK":
-        return "block"
-    if verdict == "QUARANTINE":
-        return "clean"
-    return "force"
+    if choice == "ask":
+        if verdict in RISKY_VERDICTS:
+            return _ask_user_action(verdict)
+        return "force"
+    if choice == "auto":
+        if verdict == "BLOCK":
+            return "block"
+        if verdict in {"WARN", "QUARANTINE"}:
+            return "clean"
+        return "force"
+    return {"block": "block", "clean": "clean", "force": "force"}[choice]
+
+
+def _ask_user_action(verdict: str) -> str:
+    print("\n위험이 감지되었습니다.")
+    print(f"현재 판정: {verdict}")
+    print("원하는 조치를 선택하세요.")
+    print("1. clone 차단")
+    print("2. 위험 파일 제외 후 clone")
+    print("3. 위험 감수 후 진행")
+
+    while True:
+        selected = input("> ").strip()
+        if selected == "1":
+            return "block"
+        if selected == "2":
+            return "clean"
+        if selected == "3":
+            return "force"
+        print("1, 2, 3 중 하나를 입력하세요.")
+
+
+def _perform_clone_action(source: str, destination: str, report, action: str) -> int:
+    if action == "block":
+        print("\n결과: 위험도가 높아 clone을 차단했습니다.")
+        return 1
+
+    target = Path(destination).resolve()
+    try:
+        if action == "clean":
+            _copy_without_risky_files(report.profile.local_path, target, _risky_files(report))
+            suffix = "위험 파일을 제외하고 격리 clone을 완료했습니다."
+        else:
+            _clone_or_copy(source, report.profile.local_path, target)
+            suffix = "검사 후 clone을 완료했습니다."
+    except FileExistsError as exc:
+        print(f"\n결과: 실패 - {exc}")
+        return 1
+
+    print(f"\n결과: {suffix}")
+    print(f"위치: {target}")
+    return 0
 
 
 def _risky_files(report) -> set[str]:

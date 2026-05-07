@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -47,11 +48,17 @@ def _collect_github_archive(source: str, temp_dir: Path) -> RepoProfile:
     if not roots:
         raise RuntimeError("압축 해제된 레포지토리 폴더를 찾지 못했습니다.")
 
-    trust, signals = _score_github_author(metadata)
+    owner_metadata = _fetch_json(f"https://api.github.com/users/{owner}")
+    trust, signals = _score_github_author(metadata, owner_metadata)
     return RepoProfile(source=source, local_path=roots[0], author_trust_score=trust, author_signals=signals)
 
 
-def _score_github_author(metadata: dict) -> tuple[int, list[str]]:
+def _fetch_json(url: str) -> dict:
+    with urllib.request.urlopen(url, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _score_github_author(metadata: dict, owner_metadata: dict | None = None) -> tuple[int, list[str]]:
     score = 50
     signals: list[str] = []
 
@@ -80,4 +87,42 @@ def _score_github_author(metadata: dict) -> tuple[int, list[str]]:
         score -= 5
         signals.append("아카이브된 저장소")
 
+    if owner_metadata:
+        followers = int(owner_metadata.get("followers") or 0)
+        public_repos = int(owner_metadata.get("public_repos") or 0)
+        created_at = owner_metadata.get("created_at")
+
+        if followers >= 100:
+            score += 10
+            signals.append("작성자 팔로워 100명 이상")
+        elif followers <= 1:
+            score -= 8
+            signals.append("작성자 팔로워 1명 이하")
+
+        if public_repos >= 10:
+            score += 5
+            signals.append("작성자 공개 레포 10개 이상")
+        elif public_repos <= 1:
+            score -= 5
+            signals.append("작성자 공개 레포 1개 이하")
+
+        account_age_days = _account_age_days(created_at)
+        if account_age_days is not None:
+            if account_age_days >= 365:
+                score += 8
+                signals.append("작성자 계정 생성 1년 이상")
+            elif account_age_days <= 30:
+                score -= 15
+                signals.append("작성자 계정 생성 30일 이하")
+
     return max(0, min(100, score)), signals or ["공개 GitHub 메타데이터 기반 기본 신뢰도"]
+
+
+def _account_age_days(created_at: str | None) -> int | None:
+    if not created_at:
+        return None
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - created).days
