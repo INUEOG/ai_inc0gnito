@@ -1,4 +1,4 @@
-# GuardClone
+# ai-github-git-clone-ai-cli
 
 AI 기반 GitHub 레포지토리 사전 개인정보 유출 차단 CLI 프로토타입입니다.
 
