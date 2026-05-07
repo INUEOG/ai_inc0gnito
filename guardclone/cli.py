@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("source", help="검사할 로컬 경로 또는 GitHub URL")
     scan.add_argument("--json", action="store_true", help="JSON 리포트 출력")
     scan.add_argument("--ai", choices=["off", "auto", "gemini", "gemini-api"], default="gemini", help="LLM 판단 사용 방식")
-    scan.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
+    scan.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini에서 사용할 모델")
     scan.add_argument("--gemini-command", help="Gemini CLI 실행 명령 직접 지정")
 
     clone = sub.add_parser("clone", help="검사 후 사용자 선택에 따라 clone 수행")
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     clone.add_argument("--json", action="store_true", help="JSON 리포트 출력")
     clone.add_argument("--ai", choices=["off", "auto", "gemini", "gemini-api"], default="gemini", help="LLM 판단 사용 방식")
-    clone.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini CLI에서 사용할 모델")
+    clone.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini에서 사용할 모델")
     clone.add_argument("--gemini-command", help="Gemini CLI 실행 명령 직접 지정")
 
     demo = sub.add_parser("demo", help="심사용 데모 레포지토리 생성")
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_cmd = sub.add_parser("eval", help="라벨이 있는 데이터셋으로 정량 지표 평가")
     eval_cmd.add_argument("dataset", help="labels.json이 있는 데이터셋 경로")
 
-    sub.add_parser("doctor", help="Gemini CLI 연동 상태 진단")
+    sub.add_parser("doctor", help="Gemini 연동 상태 진단")
 
     args = parser.parse_args(argv)
 
@@ -61,22 +61,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan":
-        report = scan_profile(
-            collect_source(args.source),
-            ai_provider=args.ai,
-            ai_model=args.gemini_model,
-            gemini_command=args.gemini_command,
-        )
+        report = _scan(args)
         print(render_json(report) if args.json else render_text(report))
         return 1 if report.verdict == "BLOCK" else 0
 
     if args.command == "clone":
-        report = scan_profile(
-            collect_source(args.source),
-            ai_provider=args.ai,
-            ai_model=args.gemini_model,
-            gemini_command=args.gemini_command,
-        )
+        report = _scan(args)
         print(render_json(report) if args.json else render_text(report))
         action = _resolve_action(report.verdict, args.choice)
         return _perform_clone_action(args.source, args.destination, report, action)
@@ -90,6 +80,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     return 2
+
+
+def _scan(args):
+    return scan_profile(
+        collect_source(args.source),
+        ai_provider=args.ai,
+        ai_model=args.gemini_model,
+        gemini_command=args.gemini_command,
+    )
 
 
 def _print_doctor() -> int:
@@ -109,10 +108,10 @@ def _print_doctor() -> int:
     if diagnostics["gemini_command"]:
         print("\n상태: Gemini CLI를 호출할 준비가 되어 있습니다.")
         return 0
-    print("\n상태: Gemini CLI를 찾지 못했습니다.")
+    print("\n상태: Gemini를 찾지 못했습니다.")
     print("설치: npm install -g @google/gemini-cli")
     print("인증: gemini 실행 후 Google 로그인 또는 GEMINI_API_KEY 설정")
-    print("대안: py -m guardclone scan <repo> --gemini-command \"npx -y @google/gemini-cli\"")
+    print('대안: py -m guardclone scan <repo> --gemini-command "npx -y @google/gemini-cli"')
     return 1
 
 

@@ -112,6 +112,9 @@ def _call_gemini_api_model(model: str, api_key: str, prompt: str, fallback_judge
     text = _extract_gemini_text(payload)
     parsed = _parse_jsonish(text)
     if not parsed:
+        repaired = _repair_partial_json_text(text)
+        if repaired:
+            return LlmResult("gemini-api", model, True, repaired[:600])
         return LlmResult("gemini-api", model, False, fallback_judgement, error=f"Gemini API returned unparsable JSON: {text[:200]}")
 
     judgement = _format_llm_judgement(parsed, fallback_judgement)
@@ -272,6 +275,47 @@ def _parse_jsonish(text: str) -> dict | None:
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         return None
+
+
+def _repair_partial_json_text(text: str) -> str | None:
+    judgement = _extract_json_string_value(text, "judgement")
+    reason = _extract_json_string_value(text, "reason")
+    if not judgement and not reason:
+        return None
+    parts = []
+    if judgement:
+        parts.append(judgement)
+    if reason:
+        parts.append(f"근거: {reason}")
+    return " ".join(parts)
+
+
+def _extract_json_string_value(text: str, key: str) -> str | None:
+    marker = f'"{key}"'
+    start = text.find(marker)
+    if start == -1:
+        return None
+    colon = text.find(":", start + len(marker))
+    if colon == -1:
+        return None
+    quote = text.find('"', colon + 1)
+    if quote == -1:
+        return None
+    chars: list[str] = []
+    escaped = False
+    for char in text[quote + 1 :]:
+        if escaped:
+            chars.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            break
+        chars.append(char)
+    value = "".join(chars).strip()
+    return value or None
 
 
 def _format_llm_judgement(parsed: dict, fallback_judgement: str) -> str:
