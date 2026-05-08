@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from .scanner import scan_source
 
 
 RISKY_LEVELS = {"WATCH", "SUSPICIOUS", "MALICIOUS"}
+LLM_PROVIDERS = ["off", "auto", "gemini-api", "gemini", "openai"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,8 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("source")
     scan.add_argument("--json", action="store_true", help="JSON만 출력합니다.")
     scan.add_argument("--output", default="results/guardit-report.json", help="분석 리포트 저장 경로")
-    scan.add_argument("--llm", choices=["off", "openai"], default=None, help="LLM provider 단축 옵션")
-    scan.add_argument("--llm-provider", choices=["off", "openai"], default=None)
+    scan.add_argument("--llm", choices=LLM_PROVIDERS, default=None, help="LLM provider 단축 옵션")
+    scan.add_argument("--llm-provider", choices=LLM_PROVIDERS, default=None)
     scan.add_argument("--llm-model", default=None)
     scan.add_argument("--threshold", type=int, default=70, help="위험 종료 코드 기준 점수")
     scan.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
@@ -36,8 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     clone.add_argument("--clean-clone", action="store_true", help="위험 파일 제외 clean clone을 즉시 선택합니다.")
     clone.add_argument("--allow-risk", action="store_true", help="위험을 감수하고 clone을 진행합니다.")
     clone.add_argument("--output", default="results/guardit-report.json", help="분석 리포트 저장 경로")
-    clone.add_argument("--llm", choices=["off", "openai"], default=None, help="LLM provider 단축 옵션")
-    clone.add_argument("--llm-provider", choices=["off", "openai"], default=None)
+    clone.add_argument("--llm", choices=LLM_PROVIDERS, default=None, help="LLM provider 단축 옵션")
+    clone.add_argument("--llm-provider", choices=LLM_PROVIDERS, default=None)
     clone.add_argument("--llm-model", default=None)
     clone.add_argument("--threshold", type=int, default=70, help="auto 선택 시 차단 기준 점수")
     clone.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
@@ -163,7 +165,13 @@ def _default_destination(source: str) -> str:
 def _config_from_args(args):
     config = load_config()
     provider = getattr(args, "llm", None) or getattr(args, "llm_provider", None) or config.llm_provider
-    model = getattr(args, "llm_model", None) or config.llm_model
+    requested_model = getattr(args, "llm_model", None)
+    if requested_model:
+        model = requested_model
+    elif provider == "openai" and config.llm_model == "gemini-2.5-flash":
+        model = "gpt-4.1-mini"
+    else:
+        model = config.llm_model
     sandbox_mode = getattr(args, "sandbox", None) or config.sandbox_mode
     return config.__class__(
         max_candidate_files=config.max_candidate_files,
@@ -192,11 +200,15 @@ def _doctor(config) -> int:
     print("Guardit 환경 점검")
     print("================")
     print(f"GITHUB_TOKEN 설정: {'예' if config.github_token else '아니오'}")
+    print(f"GEMINI_API_KEY 설정: {'예' if os.environ.get('GEMINI_API_KEY') else '아니오'}")
+    print(f"GOOGLE_API_KEY 설정: {'예' if os.environ.get('GOOGLE_API_KEY') else '아니오'}")
+    print(f"OPENAI_API_KEY 설정: {'예' if os.environ.get('OPENAI_API_KEY') else '아니오'}")
     print(f"LLM provider: {config.llm_provider}")
     print(f"LLM model: {config.llm_model}")
     print(f"Sandbox mode: {config.sandbox_mode}")
     print(f"Sandbox image: {config.sandbox_image}")
     print(f"Sandbox timeout: {config.sandbox_timeout_sec}s")
     print(f"max file bytes: {config.max_file_bytes}")
-    print("OPENAI_API_KEY 설정 시 --llm-provider openai를 사용할 수 있습니다.")
+    print("Gemini API 기본 사용: GEMINI_API_KEY 또는 GOOGLE_API_KEY를 설정하세요.")
+    print("필요 시 --llm-provider off/openai/auto로 변경할 수 있습니다.")
     return 0

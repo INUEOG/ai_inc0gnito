@@ -16,8 +16,8 @@ class GuarditConfig:
     results_dir: Path = Path("results")
     logs_dir: Path = Path("logs")
     github_token: str | None = None
-    llm_provider: str = "off"
-    llm_model: str = "offline"
+    llm_provider: str = "gemini-api"
+    llm_model: str = "gemini-2.5-flash"
 
 
 def load_config() -> GuarditConfig:
@@ -29,6 +29,6 @@ def load_config() -> GuarditConfig:
         sandbox_timeout_sec=int(os.environ.get("GUARDIT_SANDBOX_TIMEOUT_SEC", "8")),
         sandbox_image=os.environ.get("GUARDIT_SANDBOX_IMAGE", "guardit-sandbox:latest"),
         github_token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"),
-        llm_provider=os.environ.get("GUARDIT_LLM_PROVIDER", "off"),
-        llm_model=os.environ.get("GUARDIT_LLM_MODEL", "offline"),
+        llm_provider=os.environ.get("GUARDIT_LLM_PROVIDER", "gemini-api"),
+        llm_model=os.environ.get("GUARDIT_LLM_MODEL", "gemini-2.5-flash"),
     )

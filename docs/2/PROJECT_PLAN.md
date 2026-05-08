@@ -34,7 +34,7 @@ Guardit은 GitHub 레포지토리를 `git clone`하기 전에 자동 실행 파�
 - 위험 파일 필터: `file_filter.py`가 `.vscode/tasks.json`, `package.json`, `.husky/*`, `.githooks/*`, `scripts/*.js|*.py|*.sh` 등을 선별한다.
 - 정적 분석: `static_analyzer/regex_rules.py`, `js_analyzer.py`, `python_analyzer.py`, `shell_analyzer.py`가 evidence를 생성한다.
 - sandbox-like: `sandbox/docker_runner.py`가 실제 실행 없이 dummy credential 접근, 네트워크 시도, 프로세스 실행을 추정한다.
-- LLM/fallback: `ai/llm_judge.py`가 OpenAI 선택 연동과 offline fallback을 제공한다.
+- LLM/fallback: `ai/llm_judge.py`가 Gemini API 기본 연동, OpenAI 호환 경로, offline fallback을 제공한다.
 - risk score: `scoring/risk_score.py`가 점수와 판정을 계산한다.
 - reporter: `reporter.py`가 텍스트/JSON 리포트를 생성한다.
 - safe clone: `clone/safe_clone.py`가 GitHub zipball 또는 로컬 copy에서 위험 파일을 제외한다.
@@ -108,4 +108,4 @@ source-to-sink 분석은 완전한 프로그램 분석이 아니라 경량 추�
 
 정상 프로젝트도 curl, env, script를 사용할 수 있으므로 단일 패턴으로 MALICIOUS를 만들지 않는다. 최소 차단 조건은 자동 실행, 민감정보 접근, 외부 전송 또는 명령 실행의 결합이다.
 
-LLM은 API 비용과 개인정보 전송 위험이 있으므로 기본 off이며, 입력 전 마스킹하고 `risk_adjustment` 범위를 제한한다.
+LLM은 API 비용과 개인정보 전송 위험이 있으므로 입력 전 마스킹하고 `risk_adjustment` 범위를 제한한다. 기본 provider는 Gemini API이며, API key가 없거나 호출에 실패하면 offline fallback으로 동작한다.

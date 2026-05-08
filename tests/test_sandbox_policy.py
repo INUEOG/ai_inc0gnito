@@ -108,7 +108,7 @@ class SandboxPolicyTest(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             trace_mount = next(item for item in command if item.endswith(":/trace:rw"))
-            trace_dir = Path(trace_mount.split(":", 1)[0])
+            trace_dir = Path(trace_mount.rsplit(":/trace:rw", 1)[0])
             trace_dir.mkdir(parents=True, exist_ok=True)
             (trace_dir / "strace.log").write_text(
                 'execve("/bin/sh", ["sh", "scripts/collect.sh"], 0x0) = 0\n'

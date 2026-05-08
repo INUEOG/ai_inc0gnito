@@ -82,13 +82,16 @@ results/eval_report.md
 
 ## LLM 사용
 
-기본값은 LLM 미사용입니다.
+기본 LLM provider는 Gemini API입니다. `GEMINI_API_KEY` 또는 `GOOGLE_API_KEY`가 없으면 LLM 호출 없이 offline fallback으로 동작합니다.
 
 ```bash
-OPENAI_API_KEY=... python -m guardit scan demo_repos/malicious --llm-provider openai
+GEMINI_API_KEY=... python -m guardit scan demo_repos/malicious
+GEMINI_API_KEY=... python -m guardit clone https://github.com/owner/repo --llm-provider gemini-api
 ```
 
 LLM은 핵심 탐지 엔진이 아니라 evidence 기반 보조 판단기입니다. 파일 필터링, 정규식 탐지, source-to-sink 분석, scoring은 LLM 없이 동작합니다. LLM 입력 전 evidence 문자열은 `guardit/ai/redact.py`에서 마스킹됩니다. `risk_adjustment`는 `-10~+10`으로 제한되며 최종 점수를 직접 결정하지 않습니다.
+
+필요하면 `--llm-provider off`로 LLM을 끄거나, 호환용 `--llm-provider openai`를 사용할 수 있습니다.
 
 ## Sandbox Mode
 

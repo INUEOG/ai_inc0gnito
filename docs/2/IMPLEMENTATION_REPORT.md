@@ -8,7 +8,7 @@
 
 Guardit은 GitHub API에서 tree를 먼저 받고 위험 후보 파일만 blob으로 다운로드한다. 전체 clone 후 분석하면 이미 신뢰하지 않는 코드가 로컬에 내려온 뒤이므로 pre-clone 서비스의 의미가 약해진다. 반대로 모든 파일을 분석하면 대형 레포에서 비용과 시간이 커진다. 따라서 후보 파일 필터링을 첫 단계로 두었다.
 
-핵심 판단은 LLM이 아니라 evidence와 score가 담당한다. LLM은 비용, 개인정보 전송, 재현성 문제가 있으므로 기본 off이며, fallback 판단으로도 서비스가 동작한다.
+핵심 판단은 LLM이 아니라 evidence와 score가 담당한다. LLM은 Gemini API를 기본 보조 판단기로 사용하되, 비용, 개인정보 전송, 재현성 문제가 있으므로 fallback 판단으로도 서비스가 동작한다.
 
 ## 왜 evidence 기반 구조를 선택했는가
 
@@ -22,7 +22,7 @@ Guardit은 GitHub API에서 tree를 먼저 받고 위험 후보 파일만 blob�
 
 ## 왜 LLM을 보조 판단기로 제한했는가
 
-LLM은 코드 의도를 자연어로 요약하는 데 유용하지만, 모든 파일을 LLM에 보내면 비용과 개인정보 노출 위험이 커진다. 또한 같은 입력에서도 응답이 달라질 수 있다. Guardit은 LLM 없이도 파일 필터링, 정규식 탐지, source-to-sink 분석, scoring이 동작한다. LLM은 evidence 해석, reason 생성, 제한된 `risk_adjustment`만 담당한다.
+LLM은 코드 의도를 자연어로 요약하는 데 유용하지만, 모든 파일을 LLM에 보내면 비용과 개인정보 노출 위험이 커진다. 또한 같은 입력에서도 응답이 달라질 수 있다. Guardit은 LLM 없이도 파일 필터링, 정규식 탐지, source-to-sink 분석, scoring이 동작한다. LLM은 Gemini API 기반 evidence 해석, reason 생성, 제한된 `risk_adjustment`만 담당한다.
 
 ## 왜 sandbox-like 구조를 먼저 구현했는가
 
