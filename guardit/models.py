@@ -56,6 +56,13 @@ class CandidateFile:
 
 
 @dataclass
+class CandidateSummary:
+    path: str
+    reason: str
+    size: int
+
+
+@dataclass
 class Evidence:
     file: str
     line: int
@@ -74,6 +81,25 @@ class SandboxLog:
     action: str
     detail: str
     score: int
+
+
+@dataclass
+class SandboxSummary:
+    mode: str = "sandbox-like-static-inference"
+    opened_files: list[str] = field(default_factory=list)
+    network_attempts: list[str] = field(default_factory=list)
+    executed_processes: list[str] = field(default_factory=list)
+    dummy_credentials_accessed: bool = False
+
+
+@dataclass
+class ExecutionFlow:
+    trigger_file: str
+    executed_file: str | None
+    secret_sources: list[str] = field(default_factory=list)
+    external_sinks: list[str] = field(default_factory=list)
+    process_steps: list[str] = field(default_factory=list)
+    risk: str = "unknown"
 
 
 @dataclass
@@ -97,15 +123,18 @@ class ScoreBreakdown:
     has_auto_trigger: bool
     has_secret_access: bool
     has_external_sink: bool
+    has_command_execution: bool
     notes: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ScanReport:
     metadata: RepoMetadata
-    candidates: list[str]
+    candidates: list[CandidateSummary]
     evidence: list[Evidence]
     sandbox_logs: list[SandboxLog]
+    sandbox_summary: SandboxSummary
+    execution_flows: list[ExecutionFlow]
     llm: LLMJudgement
     score: ScoreBreakdown
     elapsed_ms: float
@@ -114,9 +143,11 @@ class ScanReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "metadata": asdict(self.metadata),
-            "candidates": self.candidates,
+            "candidates": [asdict(item) for item in self.candidates],
             "evidence": [asdict(item) for item in self.evidence],
             "sandbox_logs": [asdict(item) for item in self.sandbox_logs],
+            "sandbox_summary": asdict(self.sandbox_summary),
+            "execution_flows": [asdict(item) for item in self.execution_flows],
             "llm": asdict(self.llm),
             "score": asdict(self.score),
             "elapsed_ms": round(self.elapsed_ms, 2),

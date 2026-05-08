@@ -16,6 +16,40 @@ def render_json(report: ScanReport) -> str:
     return json.dumps(redact_obj(report.to_dict()), ensure_ascii=False, indent=2)
 
 
+def render_saved_report(path: Path) -> str:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    score = payload.get("score", {})
+    metadata = payload.get("metadata", {})
+    lines = [
+        f"[{score.get('risk_level', 'UNKNOWN')}]",
+        f"위험도: {score.get('final_score', '?')}/100",
+        f"대상: {metadata.get('source', '-')}",
+        "",
+        "위험 후보 파일:",
+    ]
+    for candidate in payload.get("candidates", [])[:20]:
+        if isinstance(candidate, dict):
+            lines.append(f"- {candidate.get('path')} ({candidate.get('reason', '')})")
+        else:
+            lines.append(f"- {candidate}")
+    lines.append("")
+    lines.append("위험 흐름:")
+    for flow in payload.get("execution_flows", [])[:10]:
+        lines.append(f"- {flow.get('trigger_file')}")
+        if flow.get("executed_file"):
+            lines.append(f"  -> {flow.get('executed_file')}")
+        for source in flow.get("secret_sources", [])[:3]:
+            lines.append(f"  -> 민감정보 접근: {source}")
+        for sink in flow.get("external_sinks", [])[:3]:
+            lines.append(f"  -> 외부 전송: {sink}")
+        lines.append(f"  risk: {flow.get('risk')}")
+    lines.append("")
+    lines.append("주요 evidence:")
+    for item in payload.get("evidence", [])[:15]:
+        lines.append(f"- {item.get('file')}:{item.get('line')} [{item.get('type')}] {item.get('description')}")
+    return "\n".join(lines)
+
+
 def render_text(report: ScanReport) -> str:
     lines = [
         f"[{report.score.risk_level}]",
@@ -29,6 +63,25 @@ def render_text(report: ScanReport) -> str:
     if report.metadata.author_trust.signals:
         lines.append("작성자 신뢰도 근거:")
         lines.extend(f"- {signal}" for signal in report.metadata.author_trust.signals[:5])
+
+    if report.candidates:
+        lines.extend(["", "위험 후보 파일:"])
+        for candidate in report.candidates[:15]:
+            lines.append(f"- {candidate.path} ({candidate.reason}, {candidate.size} bytes)")
+
+    if report.execution_flows:
+        lines.extend(["", "위험 흐름:"])
+        for flow in report.execution_flows[:8]:
+            lines.append(f"- {flow.trigger_file}")
+            if flow.executed_file:
+                lines.append(f"  -> {flow.executed_file}")
+            for source in flow.secret_sources[:3]:
+                lines.append(f"  -> 민감정보 접근: {source}")
+            for sink in flow.external_sinks[:3]:
+                lines.append(f"  -> 외부 전송: {sink}")
+            for process in flow.process_steps[:3]:
+                lines.append(f"  -> 실행/우회: {process}")
+            lines.append(f"  risk: {flow.risk}")
 
     lines.extend(["", "탐지 근거:"])
     if report.evidence:
@@ -44,6 +97,8 @@ def render_text(report: ScanReport) -> str:
 
     if report.sandbox_logs:
         lines.extend(["", "샌드박스형 행동 추정:"])
+        lines.append(f"- mode: {report.sandbox_summary.mode}")
+        lines.append(f"- dummy credential accessed: {report.sandbox_summary.dummy_credentials_accessed}")
         for log in report.sandbox_logs[:10]:
             lines.append(f"- {log.file}:{log.line} {log.action} - {log.detail}")
 

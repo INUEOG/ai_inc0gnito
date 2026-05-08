@@ -8,7 +8,7 @@ from pathlib import Path
 from .clone import clean_clone, force_clone_or_copy
 from .config import load_config
 from .evaluation import evaluate_dataset
-from .reporter import render_json, render_text, save_report
+from .reporter import render_json, render_saved_report, render_text, save_report
 from .scanner import scan_source
 
 
@@ -22,18 +22,30 @@ def main(argv: list[str] | None = None) -> int:
     scan = sub.add_parser("scan", help="GitHub URL 또는 로컬 경로를 분석합니다.")
     scan.add_argument("source")
     scan.add_argument("--json", action="store_true", help="JSON만 출력합니다.")
+    scan.add_argument("--output", default="results/guardit-report.json", help="분석 리포트 저장 경로")
+    scan.add_argument("--llm", choices=["off", "openai"], default=None, help="LLM provider 단축 옵션")
     scan.add_argument("--llm-provider", choices=["off", "openai"], default=None)
     scan.add_argument("--llm-model", default=None)
+    scan.add_argument("--threshold", type=int, default=70, help="위험 종료 코드 기준 점수")
 
     clone = sub.add_parser("clone", help="분석 후 사용자 선택에 따라 clone을 진행합니다.")
     clone.add_argument("repo_url")
     clone.add_argument("destination", nargs="?", help="생략 시 레포 이름을 사용합니다.")
     clone.add_argument("--choice", choices=["ask", "block", "clean", "force", "auto"], default="ask")
+    clone.add_argument("--clean-clone", action="store_true", help="위험 파일 제외 clean clone을 즉시 선택합니다.")
+    clone.add_argument("--allow-risk", action="store_true", help="위험을 감수하고 clone을 진행합니다.")
+    clone.add_argument("--output", default="results/guardit-report.json", help="분석 리포트 저장 경로")
+    clone.add_argument("--llm", choices=["off", "openai"], default=None, help="LLM provider 단축 옵션")
     clone.add_argument("--llm-provider", choices=["off", "openai"], default=None)
     clone.add_argument("--llm-model", default=None)
+    clone.add_argument("--threshold", type=int, default=70, help="auto 선택 시 차단 기준 점수")
 
     eval_cmd = sub.add_parser("eval", help="라벨 기반 정량 평가를 실행합니다.")
     eval_cmd.add_argument("dataset", nargs="?", default="demo_repos")
+    eval_cmd.add_argument("--output", default="results/eval_result.json", help="평가 JSON 저장 경로")
+
+    report_cmd = sub.add_parser("report", help="저장된 JSON 리포트를 사람이 읽기 쉽게 출력합니다.")
+    report_cmd.add_argument("result", nargs="?", default="results/guardit-report.json")
 
     sub.add_parser("doctor", help="환경 설정을 점검합니다.")
 
@@ -42,21 +54,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         report = _run_scan(args.source, config, quiet=args.json)
-        save_report(report)
+        save_report(report, Path(args.output))
         print(render_json(report) if args.json else render_text(report))
-        return 1 if report.score.risk_level == "MALICIOUS" else 0
+        return 1 if report.score.final_score >= args.threshold else 0
 
     if args.command == "clone":
         report = _run_clone_scan(args.repo_url, config)
-        save_report(report)
+        save_report(report, Path(args.output))
         print(render_text(report))
-        action = _resolve_action(report.score.risk_level, args.choice)
+        choice = _clone_choice_from_flags(args)
+        action = _resolve_action(report.score.risk_level, choice, report.score.final_score, args.threshold)
         return _perform_action(args.repo_url, args.destination, action, report, config.github_token)
 
     if args.command == "eval":
-        result = evaluate_dataset(Path(args.dataset).resolve())
+        result = evaluate_dataset(Path(args.dataset).resolve(), Path(args.output))
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        print("평가 리포트: results/evaluation-report.json")
+        print(f"평가 JSON: {args.output}")
+        print("평가 Markdown: results/eval_report.md")
+        return 0
+
+    if args.command == "report":
+        print(render_saved_report(Path(args.result)))
         return 0
 
     if args.command == "doctor":
@@ -84,11 +102,11 @@ def _progress(message: str, quiet: bool) -> None:
     print(message, file=sys.stderr if quiet else sys.stdout)
 
 
-def _resolve_action(level: str, choice: str) -> str:
+def _resolve_action(level: str, choice: str, score: int = 0, threshold: int = 70) -> str:
     if choice == "auto":
-        if level == "MALICIOUS":
+        if score >= threshold or level == "MALICIOUS":
             return "block"
-        if level in {"WATCH", "SUSPICIOUS"}:
+        if level in RISKY_LEVELS:
             return "clean"
         return "force"
     if choice != "ask":
@@ -141,7 +159,7 @@ def _default_destination(source: str) -> str:
 
 def _config_from_args(args):
     config = load_config()
-    provider = getattr(args, "llm_provider", None) or config.llm_provider
+    provider = getattr(args, "llm", None) or getattr(args, "llm_provider", None) or config.llm_provider
     model = getattr(args, "llm_model", None) or config.llm_model
     return config.__class__(
         max_candidate_files=config.max_candidate_files,
@@ -153,6 +171,14 @@ def _config_from_args(args):
         llm_provider=provider,
         llm_model=model,
     )
+
+
+def _clone_choice_from_flags(args) -> str:
+    if args.clean_clone:
+        return "clean"
+    if args.allow_risk:
+        return "force"
+    return args.choice
 
 
 def _doctor(config) -> int:

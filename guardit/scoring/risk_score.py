@@ -4,9 +4,8 @@ from guardit.models import Evidence, LLMJudgement, RepoMetadata, RiskLevel, Sand
 
 
 LEVELS: list[tuple[int, RiskLevel]] = [
-    (80, "MALICIOUS"),
-    (50, "SUSPICIOUS"),
-    (30, "WATCH"),
+    (70, "MALICIOUS"),
+    (30, "SUSPICIOUS"),
     (0, "SAFE"),
 ]
 
@@ -21,17 +20,18 @@ def score_report(
     has_secret_access = any(item.category == "secret_access" for item in evidence)
     has_external_sink = any(item.category == "external_sink" for item in evidence)
     has_flow = any(item.category == "data_flow" for item in evidence)
+    has_command_execution = any(item.category in {"remote_execution", "process_execution", "obfuscation"} for item in evidence)
 
     score = 0
     notes: list[str] = []
     for category, cap in {
-        "auto_trigger": 20,
-        "secret_access": 25,
-        "external_sink": 25,
-        "data_flow": 20,
-        "obfuscation": 10,
+        "auto_trigger": 30,
+        "secret_access": 35,
+        "external_sink": 35,
+        "data_flow": 40,
+        "obfuscation": 20,
         "remote_execution": 20,
-        "process_execution": 10,
+        "process_execution": 20,
     }.items():
         category_score = min(cap, sum(item.score for item in evidence if item.category == category))
         if category_score:
@@ -41,7 +41,7 @@ def score_report(
     if has_flow:
         notes.append("source -> sink 흐름 탐지")
 
-    sandbox_file = min(30, sum(log.score for log in sandbox_logs if log.action == "dummy_credential_access"))
+    sandbox_file = min(40, sum(log.score for log in sandbox_logs if log.action == "dummy_credential_access"))
     sandbox_net = min(25, sum(log.score for log in sandbox_logs if log.action == "network_connect_attempt"))
     if sandbox_file:
         score += sandbox_file
@@ -50,21 +50,25 @@ def score_report(
         score += sandbox_net
         notes.append(f"sandbox network connect 시도: +{sandbox_net}")
 
-    trust_penalty = _trust_penalty(metadata.author_trust.score)
-    if trust_penalty:
-        score += trust_penalty
-        notes.append(f"작성자 신뢰도 보조 점수: +{trust_penalty}")
+    multiplier = _trust_multiplier(metadata.author_trust.score)
+    if score and multiplier != 1.0:
+        before = score
+        score = int(round(score * multiplier))
+        notes.append(f"작성자 신뢰도 보조 multiplier: {multiplier:.2f} ({before} -> {score})")
 
-    forced = has_auto_trigger and has_secret_access and has_external_sink
+    forced = has_auto_trigger and has_secret_access and (has_external_sink or has_command_execution)
     if forced:
-        score = max(score, 80)
-        notes.append("강제 규칙 적용: 자동 실행 + 민감정보 접근 + 외부 전송")
+        score = max(score, 70)
+        notes.append("강제 규칙 적용: 자동 실행 + 민감정보 접근 + 외부 전송/명령 실행")
+    elif not has_secret_access and score > 69:
+        score = 69
+        notes.append("민감정보 접근 근거가 없어 MALICIOUS 상한을 적용")
 
     base_score = max(0, min(100, score))
     adjustment = _bounded_adjustment(llm.risk_adjustment if llm else 0)
     final_score = max(0, min(100, base_score + adjustment))
     if forced:
-        final_score = max(final_score, 80)
+        final_score = max(final_score, 70)
 
     return ScoreBreakdown(
         base_score=base_score,
@@ -74,14 +78,21 @@ def score_report(
         has_auto_trigger=has_auto_trigger,
         has_secret_access=has_secret_access,
         has_external_sink=has_external_sink,
+        has_command_execution=has_command_execution,
         notes=notes,
     )
 
 
-def _trust_penalty(score: int) -> int:
-    if score >= 50:
-        return 0
-    return min(10, (50 - score + 4) // 5)
+def _trust_multiplier(score: int) -> float:
+    if score <= 20:
+        return 1.3
+    if score <= 35:
+        return 1.2
+    if score <= 49:
+        return 1.1
+    if score >= 85:
+        return 0.95
+    return 1.0
 
 
 def _bounded_adjustment(value: int) -> int:

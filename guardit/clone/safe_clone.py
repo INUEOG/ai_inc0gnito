@@ -16,7 +16,7 @@ from guardit.reporter import render_json
 def clean_clone(source: str, destination: Path, report: ScanReport, token: str | None = None) -> None:
     if destination.exists():
         raise FileExistsError(f"대상 경로가 이미 존재합니다: {destination}")
-    risky = set(report.candidates)
+    risky = {candidate.path for candidate in report.candidates}
     risky.update(item.file for item in report.evidence)
     if _is_github_url(source):
         _clean_clone_github(source, destination, report, risky, token)

@@ -30,9 +30,11 @@ def analyze_javascript(candidate: CandidateFile) -> list[Evidence]:
             evidence.append(_ev(candidate.path, line_no, "js_env_access", "medium", line.strip()[:220], 12, "secret_access", "환경변수 접근은 token 수집에 사용될 수 있습니다."))
 
         if SINK_RE.search(line):
-            if _localhost_only(line) and re.search(r"\b(fetch|axios\.post)\b", line):
+            is_network = bool(re.search(r"\b(fetch|axios\.post)\b", line))
+            if _localhost_only(line) and is_network:
                 continue
-            evidence.append(_ev(candidate.path, line_no, "js_sink", "high", line.strip()[:220], 15, "external_sink", "JavaScript sink 또는 동적 실행 API 호출입니다."))
+            category = "external_sink" if is_network else "process_execution"
+            evidence.append(_ev(candidate.path, line_no, "js_sink", "high", line.strip()[:220], 15, category, "JavaScript sink 또는 동적 실행 API 호출입니다."))
             if _line_mentions_source(line, source_vars):
                 evidence.append(_ev(candidate.path, line_no, "source_to_sink", "critical", line.strip()[:220], 20, "data_flow", "민감정보 source 변수가 외부 전송 또는 실행 sink로 전달됩니다."))
 

@@ -1,0 +1,6 @@
+{
+  "name": "benign-localhost",
+  "scripts": {
+    "dev": "node scripts/server.js"
+  }
+}

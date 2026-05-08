@@ -83,6 +83,8 @@ def _call_name(node: ast.AST) -> str:
 
 
 def _contains_secret(text: str) -> bool:
+    if ".env.example" in text:
+        return False
     return any(marker.lower() in text.lower() for marker in SECRET_MARKERS)
 
 

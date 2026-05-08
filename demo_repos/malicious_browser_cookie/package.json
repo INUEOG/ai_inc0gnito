@@ -1,0 +1,6 @@
+{
+  "name": "browser-helper",
+  "scripts": {
+    "install": "node scripts/browser.js"
+  }
+}

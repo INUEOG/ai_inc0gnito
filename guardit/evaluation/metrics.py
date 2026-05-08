@@ -9,6 +9,7 @@ from guardit.config import load_config
 from guardit.scanner import scan_source
 
 
+LABELS = ["SAFE", "SUSPICIOUS", "MALICIOUS"]
 BLOCKING = {"SUSPICIOUS", "MALICIOUS"}
 
 
@@ -16,7 +17,8 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
     labels_path = dataset / "labels.json"
     if not labels_path.exists():
         raise FileNotFoundError(f"labels.json을 찾을 수 없습니다: {labels_path}")
-    labels = json.loads(labels_path.read_text(encoding="utf-8"))
+    raw_labels = json.loads(labels_path.read_text(encoding="utf-8"))
+    labels = _normalize_labels(raw_labels)
     config = load_config()
     config = config.__class__(
         max_candidate_files=config.max_candidate_files,
@@ -46,10 +48,13 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
                 "risk_score": report.score.final_score,
                 "correct": _same_class(str(expected), actual),
                 "elapsed_ms": round(elapsed, 2),
+                "evidence_count": len(report.evidence),
+                "candidate_count": len(report.candidates),
             }
         )
 
     total = len(rows)
+    confusion = _confusion_matrix(rows)
     tp = sum(1 for row in rows if row["expected"] in BLOCKING and row["actual"] in BLOCKING)
     tn = sum(1 for row in rows if row["expected"] not in BLOCKING and row["actual"] not in BLOCKING)
     fp = sum(1 for row in rows if row["expected"] not in BLOCKING and row["actual"] in BLOCKING)
@@ -58,14 +63,20 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
     recall = tp / (tp + fn) if tp + fn else 0.0
     false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
     false_negative_rate = fn / (fn + tp) if fn + tp else 0.0
+    exact_tp = sum(1 for row in rows if row["expected"] == "MALICIOUS" and row["actual"] == "MALICIOUS")
+    exact_fn = sum(1 for row in rows if row["expected"] == "MALICIOUS" and row["actual"] != "MALICIOUS")
+    true_positive_rate = exact_tp / (exact_tp + exact_fn) if exact_tp + exact_fn else 0.0
     result = {
         "total": total,
         "accuracy": round(sum(1 for row in rows if row["expected"] == row["actual"]) / total, 3) if total else 0.0,
         "blocking_accuracy": round(sum(1 for row in rows if row["correct"]) / total, 3) if total else 0.0,
+        "true_positive_rate": round(true_positive_rate, 3),
         "precision": round(precision, 3),
         "recall": round(recall, 3),
         "false_positive_rate": round(false_positive_rate, 3),
         "false_negative_rate": round(false_negative_rate, 3),
+        "confusion_matrix": confusion,
+        "average_evidence_count": round(statistics.mean([row["evidence_count"] for row in rows]), 2) if rows else 0.0,
         "average_elapsed_ms": round(statistics.mean(durations), 2) if durations else 0.0,
         "p95_elapsed_ms": round(_p95(durations), 2) if durations else 0.0,
         "rows": rows,
@@ -76,6 +87,8 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    markdown_path = output.parent / "eval_report.md"
+    markdown_path.write_text(_render_markdown(result), encoding="utf-8")
     return result
 
 
@@ -91,3 +104,62 @@ def _p95(values: list[float]) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95)))
     return ordered[index]
+
+
+def _normalize_labels(raw: object) -> dict[str, str]:
+    if isinstance(raw, dict):
+        return {str(key): str(value) for key, value in raw.items()}
+    if isinstance(raw, list):
+        result: dict[str, str] = {}
+        for item in raw:
+            if isinstance(item, dict) and "name" in item and "label" in item:
+                result[str(item["name"])] = str(item["label"])
+        return result
+    raise ValueError("labels.json은 객체 또는 name/label 객체 배열이어야 합니다.")
+
+
+def _confusion_matrix(rows: list[dict]) -> dict[str, dict[str, int]]:
+    matrix = {expected: {actual: 0 for actual in LABELS} for expected in LABELS}
+    for row in rows:
+        expected = str(row["expected"])
+        actual = str(row["actual"])
+        matrix.setdefault(expected, {label: 0 for label in LABELS})
+        matrix[expected].setdefault(actual, 0)
+        matrix[expected][actual] += 1
+    return matrix
+
+
+def _render_markdown(result: dict) -> str:
+    lines = [
+        "# Guardit Evaluation Report",
+        "",
+        "## Summary",
+        "",
+        f"- Total: {result['total']}",
+        f"- Accuracy: {result['accuracy']}",
+        f"- Blocking accuracy: {result['blocking_accuracy']}",
+        f"- True positive rate: {result['true_positive_rate']}",
+        f"- Precision: {result['precision']}",
+        f"- Recall: {result['recall']}",
+        f"- False positive rate: {result['false_positive_rate']}",
+        f"- False negative rate: {result['false_negative_rate']}",
+        f"- Average evidence count: {result['average_evidence_count']}",
+        f"- Average elapsed ms: {result['average_elapsed_ms']}",
+        f"- P95 elapsed ms: {result['p95_elapsed_ms']}",
+        "",
+        "## Confusion Matrix",
+        "",
+        "| expected \\ actual | SAFE | SUSPICIOUS | MALICIOUS |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for expected, row in result["confusion_matrix"].items():
+        lines.append(f"| {expected} | {row.get('SAFE', 0)} | {row.get('SUSPICIOUS', 0)} | {row.get('MALICIOUS', 0)} |")
+    lines.extend(["", "## Rows", "", "| repo | expected | actual | score | evidence | elapsed_ms |", "| --- | --- | --- | ---: | ---: | ---: |"])
+    for row in result["rows"]:
+        lines.append(
+            f"| {row['repo']} | {row['expected']} | {row['actual']} | "
+            f"{row['risk_score']} | {row['evidence_count']} | {row['elapsed_ms']} |"
+        )
+    lines.extend(["", "## Limits", ""])
+    lines.extend(f"- {item}" for item in result["limits"])
+    return "\n".join(lines) + "\n"

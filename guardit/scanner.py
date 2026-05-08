@@ -7,8 +7,9 @@ from urllib.parse import urlparse
 from .ai import LLMJudge
 from .config import GuarditConfig
 from .file_filter import filter_candidate_files, is_candidate_path, looks_binary
+from .flow import build_execution_flows
 from .github_client import GitHubClient
-from .models import AuthorTrust, CandidateFile, RepoFile, RepoMetadata, ScanReport
+from .models import AuthorTrust, CandidateFile, CandidateSummary, RepoFile, RepoMetadata, ScanReport
 from .sandbox import SandboxRunner
 from .scoring import score_report
 from .static_analyzer import analyze_candidate
@@ -25,10 +26,13 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
     for candidate in candidates:
         evidence.extend(analyze_candidate(candidate))
 
+    execution_flows = build_execution_flows(candidates, evidence)
     provisional = score_report(metadata, evidence, [], None)
     sandbox_logs = []
+    sandbox_runner = SandboxRunner()
     if provisional.final_score >= config.sandbox_threshold:
-        sandbox_logs = SandboxRunner().analyze(candidates, evidence)
+        sandbox_logs = sandbox_runner.analyze(candidates, evidence)
+    sandbox_summary = sandbox_runner.summarize(sandbox_logs)
 
     base_after_sandbox = score_report(metadata, evidence, sandbox_logs, None)
     llm = LLMJudge(provider=config.llm_provider, model=config.llm_model).judge(
@@ -42,9 +46,11 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
     elapsed_ms = (time.perf_counter() - started) * 1000
     return ScanReport(
         metadata=metadata,
-        candidates=[candidate.path for candidate in candidates],
+        candidates=[CandidateSummary(candidate.path, candidate.reason, candidate.size) for candidate in candidates],
         evidence=evidence,
         sandbox_logs=sandbox_logs,
+        sandbox_summary=sandbox_summary,
+        execution_flows=execution_flows,
         llm=llm,
         score=score,
         elapsed_ms=elapsed_ms,

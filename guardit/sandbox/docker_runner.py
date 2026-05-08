@@ -3,12 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from guardit.models import CandidateFile, Evidence, SandboxLog
+from guardit.models import CandidateFile, Evidence, SandboxLog, SandboxSummary
 
 
 SECRET_RE = re.compile(r"(\.aws[/\\]credentials|\.ssh[/\\]id_rsa|\.env|NPM_TOKEN|GITHUB_TOKEN|ghp_|github_pat_)", re.I)
 NETWORK_RE = re.compile(r"(https?://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)|curl|wget|fetch|axios\.post|requests\.post|nc\s+)", re.I)
-PROCESS_RE = re.compile(r"(child_process|subprocess|os\.system|bash\s+-c|node\s+-e|eval|exec)", re.I)
+PROCESS_RE = re.compile(r"(child_process|subprocess|os\.system|bash\s+-c|node\s+-e|eval|exec|\b(node|python|python3|bash|sh|pwsh|powershell)\s+[\w./-]+)", re.I)
 
 
 @dataclass
@@ -30,7 +30,7 @@ class SandboxRunner:
             for line_no, line in enumerate(candidate.content.splitlines(), start=1):
                 stripped = line.strip()
                 if SECRET_RE.search(line):
-                    logs.append(SandboxLog(candidate.path, line_no, "dummy_credential_access", stripped[:220], 30))
+                    logs.append(SandboxLog(candidate.path, line_no, "dummy_credential_access", _secret_target(line) or stripped[:220], 40))
                 if NETWORK_RE.search(line):
                     logs.append(SandboxLog(candidate.path, line_no, "network_connect_attempt", stripped[:220], 25))
                 if PROCESS_RE.search(line):
@@ -46,6 +46,14 @@ class SandboxRunner:
             "--security-opt=no-new-privileges",
         ]
 
+    def summarize(self, logs: list[SandboxLog]) -> SandboxSummary:
+        return SandboxSummary(
+            opened_files=sorted({log.detail for log in logs if log.action == "dummy_credential_access"}),
+            network_attempts=sorted({log.detail for log in logs if log.action == "network_connect_attempt"}),
+            executed_processes=sorted({log.detail for log in logs if log.action == "process_spawn"}),
+            dummy_credentials_accessed=any(log.action == "dummy_credential_access" for log in logs),
+        )
+
 
 def _dedupe(logs: list[SandboxLog]) -> list[SandboxLog]:
     seen: set[tuple[str, int, str]] = set()
@@ -57,3 +65,21 @@ def _dedupe(logs: list[SandboxLog]) -> list[SandboxLog]:
         seen.add(key)
         result.append(log)
     return result
+
+
+def _secret_target(line: str) -> str | None:
+    for pattern in [
+        r"\$HOME/\.aws/credentials",
+        r"~/\.aws/credentials",
+        r"\.aws[/\\]credentials",
+        r"\$HOME/\.ssh/id_rsa",
+        r"~/\.ssh/id_rsa",
+        r"\.ssh[/\\]id_rsa",
+        r"\$HOME/\.env",
+        r"~/\.env",
+        r"\.env",
+    ]:
+        match = re.search(pattern, line, flags=re.I)
+        if match:
+            return match.group(0)
+    return None

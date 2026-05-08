@@ -15,6 +15,8 @@ def analyze_shell(candidate: CandidateFile) -> list[Evidence]:
     evidence: list[Evidence] = []
     source_vars: set[str] = set()
     for line_no, line in enumerate(candidate.content.splitlines(), start=1):
+        if ".env.example" in line:
+            continue
         assign = SOURCE_ASSIGN_RE.search(line)
         if assign:
             source_vars.add(assign.group(1))
