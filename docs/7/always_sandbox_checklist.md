@@ -1,0 +1,23 @@
+# Always Sandbox Checklist
+
+- [x] sandbox 실행 흐름 분석
+- [x] threshold 기반 Docker 실행 조건 제거
+- [x] low score skip policy 제거
+- [x] `docker-sandbox-skipped` 상태 제거
+- [x] static-only shortcut 제거
+- [x] sandbox unconditional 실행 적용
+- [x] safe repo도 lightweight Docker probe 실행
+- [x] observed evidence 수집 구조 점검
+- [x] `openat` credential access parser 유지
+- [x] `connect`/`sendto` network attempt parser 유지
+- [x] `execve` process execution parser 유지
+- [x] Docker runner failure fallback 정리
+- [x] Docker unavailable fallback 이유 명확화
+- [x] reporter threshold skip 문구 제거
+- [x] observed 무탐지 출력 추가
+- [x] CLI sandbox 기본 정책 정리
+- [x] sandbox threshold config 제거
+- [x] low score repo sandbox 수행 테스트 수정
+- [x] safe repo sandbox 수행 테스트 추가
+- [x] Docker unavailable fallback 테스트 수정
+- [x] 결과 문서 작성

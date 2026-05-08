@@ -11,7 +11,7 @@ from .file_filter import filter_candidate_files, is_candidate_path, looks_binary
 from .flow import build_execution_flows
 from .github_client import GitHubClient
 from .models import AuthorTrust, CandidateFile, CandidateSummary, Evidence, RepoFile, RepoMetadata, ScanReport, ScanWarning
-from .sandbox import DockerSandboxRunner, StaticBehaviorAnalyzer
+from .sandbox import DockerSandboxRunner
 from .scoring import score_report
 from .static_analyzer import analyze_candidate
 
@@ -36,27 +36,12 @@ def scan_source(source: str, config: GuarditConfig, progress: ProgressCallback |
         evidence.extend(analyze_candidate(candidate))
 
     execution_flows = build_execution_flows(candidates, evidence)
-    provisional = score_report(metadata, evidence, [], None)
     _progress(progress, "done", 3, "정적 개인정보 유출 분석")
     _progress(progress, "start", 4, "샌드박스 행동 분석")
-    sandbox_logs = []
-    if config.sandbox_mode == "off":
-        sandbox_summary = StaticBehaviorAnalyzer().summarize([])
-        sandbox_summary.mode = "off"
-    elif config.sandbox_mode == "docker" and provisional.final_score >= config.sandbox_threshold:
-        sandbox_logs, sandbox_summary = DockerSandboxRunner(
-            image=config.sandbox_image,
-            timeout_sec=config.sandbox_timeout_sec,
-        ).analyze(candidates, evidence, execution_flows)
-    elif config.sandbox_mode == "docker":
-        sandbox_summary = StaticBehaviorAnalyzer().summarize([])
-        sandbox_summary.mode = "docker-sandbox-skipped"
-        sandbox_summary.fallback_reason = f"LLM 보정 전 점수 {provisional.final_score}가 sandbox threshold {config.sandbox_threshold} 미만입니다."
-    else:
-        sandbox_runner = StaticBehaviorAnalyzer()
-        if provisional.final_score >= config.sandbox_threshold:
-            sandbox_logs = sandbox_runner.analyze(candidates, evidence)
-        sandbox_summary = sandbox_runner.summarize(sandbox_logs)
+    sandbox_logs, sandbox_summary = DockerSandboxRunner(
+        image=config.sandbox_image,
+        timeout_sec=config.sandbox_timeout_sec,
+    ).analyze(candidates, evidence, execution_flows)
     _progress(progress, "done", 4, "샌드박스 행동 분석")
 
     _progress(progress, "start", 5, "AI 보조 판단")

@@ -63,11 +63,12 @@ class DockerSandboxRunner:
     ) -> tuple[list[SandboxLog], SandboxSummary]:
         docker_path = shutil.which("docker")
         if docker_path is None:
-            return self._fallback(candidates, evidence, "Docker CLI를 찾지 못해 static behavior inference로 fallback했습니다.")
+            return self._fallback(candidates, evidence, "Docker CLI unavailable")
 
         commands = execution_commands(flows)
-        if not commands:
-            return self._fallback(candidates, evidence, "제한 실행 가능한 자동 실행 command를 찾지 못해 static behavior inference로 fallback했습니다.")
+        probe_only = not commands
+        if probe_only:
+            commands = ["true"]
 
         with tempfile.TemporaryDirectory(prefix="guardit_sandbox_") as tmp:
             root = Path(tmp)
@@ -84,17 +85,19 @@ class DockerSandboxRunner:
             try:
                 completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout_sec + 3, check=False)
             except subprocess.TimeoutExpired:
-                return self._fallback(candidates, evidence, f"Docker sandbox timed out after {self.timeout_sec + 3}s.")
+                return self._fallback(candidates, evidence, f"Docker sandbox timed out after {self.timeout_sec + 3}s")
             except OSError as exc:
-                return self._fallback(candidates, evidence, f"Docker sandbox 실행 실패: {exc}")
+                return self._fallback(candidates, evidence, f"Docker sandbox runtime error: {exc}")
             trace_path = trace_dir / "strace.log"
             trace_text = trace_path.read_text(encoding="utf-8", errors="replace") if trace_path.exists() else ""
-            logs = parse_strace(trace_text, file_hint="docker-sandbox")
+            logs = parse_strace(trace_text, file_hint="docker")
+            if probe_only:
+                logs = [log for log in logs if log.action != "process_spawn"]
             if completed.returncode != 0 and not logs:
                 reason = (completed.stderr or completed.stdout or f"Docker sandbox exited with {completed.returncode}").strip()[:400]
                 return self._fallback(candidates, evidence, reason)
 
-        summary = summarize_sandbox_logs("docker-sandbox", logs, is_real_sandbox=True)
+        summary = summarize_sandbox_logs("docker", logs, is_real_sandbox=True)
         return logs, summary
 
     def security_profile(self) -> list[str]:
@@ -154,7 +157,14 @@ class DockerSandboxRunner:
     def _fallback(self, candidates: list[CandidateFile], evidence: list[Evidence], reason: str) -> tuple[list[SandboxLog], SandboxSummary]:
         static = StaticBehaviorAnalyzer()
         logs = static.analyze(candidates, evidence)
-        return logs, static.summarize(logs, fallback_used=True, fallback_reason=reason)
+        summary = summarize_sandbox_logs(
+            "static-fallback",
+            logs,
+            is_real_sandbox=False,
+            fallback_used=True,
+            fallback_reason=reason,
+        )
+        return logs, summary
 
 
 SandboxRunner = StaticBehaviorAnalyzer

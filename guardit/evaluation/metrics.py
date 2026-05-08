@@ -23,7 +23,6 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
     config = config.__class__(
         max_candidate_files=config.max_candidate_files,
         max_file_bytes=config.max_file_bytes,
-        sandbox_threshold=config.sandbox_threshold,
         sandbox_mode=sandbox_mode or config.sandbox_mode,
         sandbox_timeout_sec=config.sandbox_timeout_sec,
         sandbox_image=config.sandbox_image,

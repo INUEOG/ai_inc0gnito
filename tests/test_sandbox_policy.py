@@ -50,21 +50,25 @@ class SandboxPolicyTest(unittest.TestCase):
         self.assertTrue(report.warnings)
 
     def test_postinstall_exe_adds_binary_execution_evidence_and_score_note(self) -> None:
-        report = _scan_fixture(
-            {
-                "package.json": json.dumps({"scripts": {"postinstall": "loader.exe"}}),
-            },
-            sandbox_mode="docker",
-        )
+        with patch("guardit.sandbox.docker_runner.shutil.which", return_value="/usr/bin/docker"), patch(
+            "guardit.sandbox.docker_runner.subprocess.run", side_effect=_fake_docker_run("")
+        ):
+            report = _scan_fixture(
+                {
+                    "package.json": json.dumps({"scripts": {"postinstall": "loader.exe"}}),
+                },
+                sandbox_mode="docker",
+            )
         rendered = render_text(report)
         self.assertTrue(any(item.type == "binary_execution" for item in report.evidence))
         self.assertTrue(any(note.startswith("binary_execution: +") for note in report.score.notes))
         self.assertTrue(any(note == "LLM risk_adjustment: +0" for note in report.score.notes))
-        self.assertEqual(report.sandbox_summary.mode, "docker-sandbox-skipped")
-        self.assertIn("LLM 보정 전 점수", report.sandbox_summary.fallback_reason or "")
-        self.assertIn("최종 판정:", rendered)
-        self.assertIn("AI 보조 판단:", rendered)
-        self.assertIn("- AI 판단:", rendered)
+        self.assertEqual(report.sandbox_summary.mode, "docker")
+        self.assertTrue(report.sandbox_summary.is_real_sandbox)
+        self.assertIsNone(report.sandbox_summary.fallback_reason)
+        self.assertIn("최종 판정", rendered)
+        self.assertIn("AI 분석", rendered)
+        self.assertIn("AI 판단:", rendered)
 
     def test_auto_run_with_credential_access_is_suspicious(self) -> None:
         report = _scan_fixture(
@@ -118,7 +122,19 @@ class SandboxPolicyTest(unittest.TestCase):
             report = scan_source("demo_repos/malicious", _config(sandbox_mode="docker"))
         self.assertTrue(report.sandbox_summary.fallback_used)
         self.assertFalse(report.sandbox_summary.is_real_sandbox)
-        self.assertEqual(report.sandbox_summary.mode, "static-behavior-inference")
+        self.assertEqual(report.sandbox_summary.mode, "static-fallback")
+        self.assertIn("Docker CLI unavailable", report.sandbox_summary.fallback_reason or "")
+
+    def test_safe_repo_still_runs_real_sandbox(self) -> None:
+        with patch("guardit.sandbox.docker_runner.shutil.which", return_value="/usr/bin/docker"), patch(
+            "guardit.sandbox.docker_runner.subprocess.run", side_effect=_fake_docker_run("")
+        ):
+            report = _scan_fixture({"README.md": "hello\n"}, sandbox_mode="docker")
+        self.assertEqual(report.sandbox_summary.mode, "docker")
+        self.assertTrue(report.sandbox_summary.is_real_sandbox)
+        self.assertFalse(report.sandbox_summary.fallback_used)
+        self.assertFalse(report.sandbox_summary.observed_opened_files)
+        self.assertIn("suspicious behavior not observed", render_text(report))
 
     def test_docker_sandbox_success_parses_observed_logs(self) -> None:
         candidate = CandidateFile("scripts/collect.sh", "cat $HOME/.aws/credentials\n", 27)
@@ -168,6 +184,17 @@ def _scan_fixture(files: dict[str, str], sandbox_mode: str) -> object:
 def _config(sandbox_mode: str):
     config = load_config()
     return config.__class__(llm_provider="off", sandbox_mode=sandbox_mode)
+
+
+def _fake_docker_run(trace_text: str):
+    def fake_run(command, **kwargs):
+        trace_mount = next(item for item in command if item.endswith(":/trace:rw"))
+        trace_dir = Path(trace_mount.rsplit(":/trace:rw", 1)[0])
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        (trace_dir / "strace.log").write_text(trace_text, encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return fake_run
 
 
 if __name__ == "__main__":

@@ -9,8 +9,7 @@ from pathlib import Path
 class GuarditConfig:
     max_candidate_files: int = 80
     max_file_bytes: int = 300_000
-    sandbox_threshold: int = 30
-    sandbox_mode: str = "static"
+    sandbox_mode: str = "docker"
     sandbox_timeout_sec: int = 8
     sandbox_image: str = "guardit-sandbox:latest"
     results_dir: Path = Path("results")
@@ -28,8 +27,7 @@ def load_config() -> GuarditConfig:
     return GuarditConfig(
         max_candidate_files=int(os.environ.get("GUARDIT_MAX_CANDIDATE_FILES", "80")),
         max_file_bytes=int(os.environ.get("GUARDIT_MAX_FILE_BYTES", "300000")),
-        sandbox_threshold=int(os.environ.get("GUARDIT_SANDBOX_THRESHOLD", "30")),
-        sandbox_mode=os.environ.get("GUARDIT_SANDBOX_MODE", "static"),
+        sandbox_mode=_sandbox_mode(os.environ.get("GUARDIT_SANDBOX_MODE", "docker")),
         sandbox_timeout_sec=int(os.environ.get("GUARDIT_SANDBOX_TIMEOUT_SEC", "8")),
         sandbox_image=os.environ.get("GUARDIT_SANDBOX_IMAGE", "guardit-sandbox:latest"),
         github_token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"),
@@ -47,3 +45,8 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sandbox_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    return "docker" if normalized in {"always", "docker", "static", "off"} else "docker"

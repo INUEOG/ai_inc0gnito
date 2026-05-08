@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--llm-provider", choices=LLM_PROVIDERS, default=None)
     scan.add_argument("--llm-model", default=None)
     scan.add_argument("--threshold", type=int, default=70, help="위험 종료 코드 기준 점수")
-    scan.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
+    scan.add_argument("--sandbox", choices=["always", "docker"], default=None, help="sandbox 분석 방식")
 
     clone = sub.add_parser("clone", help="분석 후 사용자 선택에 따라 clone을 진행합니다.")
     clone.add_argument("repo_url")
@@ -42,12 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     clone.add_argument("--llm-provider", choices=LLM_PROVIDERS, default=None)
     clone.add_argument("--llm-model", default=None)
     clone.add_argument("--threshold", type=int, default=70, help="auto 선택 시 차단 기준 점수")
-    clone.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
+    clone.add_argument("--sandbox", choices=["always", "docker"], default=None, help="sandbox 분석 방식")
 
     eval_cmd = sub.add_parser("eval", help="라벨 기반 정량 평가를 실행합니다.")
     eval_cmd.add_argument("dataset", nargs="?", default="demo_repos")
     eval_cmd.add_argument("--output", default="results/eval_result.json", help="평가 JSON 저장 경로")
-    eval_cmd.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="평가 시 sandbox 분석 방식")
+    eval_cmd.add_argument("--sandbox", choices=["always", "docker"], default=None, help="평가 시 sandbox 분석 방식")
 
     report_cmd = sub.add_parser("report", help="저장된 JSON 리포트를 사람이 읽기 쉽게 출력합니다.")
     report_cmd.add_argument("result", nargs="?", default="results/guardit-report.json")
@@ -116,15 +116,15 @@ def _resolve_action(level: str, choice: str, score: int = 0, threshold: int = 70
     while True:
         selected = input("> ").strip()
         if selected == "1":
-            print("선택: Block Clone")
+            print("  → clone 차단")
             return "block"
         if selected == "2":
-            print("선택: Clone Without Risky Files")
+            print("  → 위험 파일 제외 clone")
             return "clean"
         if selected == "3":
-            print("선택: Continue Anyway")
+            print("  → 위험 감수 후 clone")
             return "force"
-        print("1, 2, 3 중 하나를 입력하세요.")
+        print("  1, 2, 3 중 하나를 입력하세요.")
 
 
 def _perform_action(source: str, destination: str | None, action: str, report, token: str | None) -> int:
@@ -132,10 +132,10 @@ def _perform_action(source: str, destination: str | None, action: str, report, t
     console = SecurityConsole()
     if action == "block":
         console.action_result(
-            "Clone Gate: Blocked",
+            "Clone 차단",
             [
                 "clone 전 단계에서 작업을 중단했습니다.",
-                "위험 후보 파일과 evidence는 JSON 리포트에서 재검토할 수 있습니다.",
+                "위험 후보 파일과 근거는 JSON 리포트에서 확인하세요.",
             ],
             report.score.risk_level,
         )
@@ -144,19 +144,19 @@ def _perform_action(source: str, destination: str | None, action: str, report, t
         if action == "clean":
             clean_clone(source, target, report, token=token)
             console.action_result(
-                "Clone Gate: Clean Clone Complete",
-                ["위험 후보 파일을 제외한 clone을 완료했습니다.", f"위치: {target}"],
+                "위험 파일 제외 Clone 완료",
+                ["위험 후보 파일을 제외하고 clone했습니다.", f"위치: {target}"],
                 "WATCH",
             )
         else:
             force_clone_or_copy(source, target)
             console.action_result(
-                "Clone Gate: Continued With Risk",
-                ["사용자 선택에 따라 원본 clone/copy를 진행했습니다.", f"위치: {target}"],
+                "Clone 완료 (위험 감수)",
+                ["사용자 선택에 따라 원본 clone을 진행했습니다.", f"위치: {target}"],
                 report.score.risk_level,
             )
     except Exception as exc:
-        console.action_result("Clone Gate: Failed", [str(exc)], "MALICIOUS")
+        console.action_result("Clone 실패", [str(exc)], "MALICIOUS")
         return 1
     return 0
 
@@ -178,10 +178,11 @@ def _config_from_args(args):
     else:
         model = config.llm_model
     sandbox_mode = getattr(args, "sandbox", None) or config.sandbox_mode
+    if sandbox_mode == "always":
+        sandbox_mode = "docker"
     return config.__class__(
         max_candidate_files=config.max_candidate_files,
         max_file_bytes=config.max_file_bytes,
-        sandbox_threshold=config.sandbox_threshold,
         sandbox_mode=sandbox_mode,
         sandbox_timeout_sec=config.sandbox_timeout_sec,
         sandbox_image=config.sandbox_image,
@@ -213,22 +214,21 @@ class _ActionReportProxy:
 
 
 def _doctor(config) -> int:
-    print("Guardit 환경 점검")
-    print("================")
-    print(f"GITHUB_TOKEN 설정: {'예' if config.github_token else '아니오'}")
-    print(f"GEMINI_API_KEY 설정: {'예' if os.environ.get('GEMINI_API_KEY') else '아니오'}")
-    print(f"GOOGLE_API_KEY 설정: {'예' if os.environ.get('GOOGLE_API_KEY') else '아니오'}")
-    print(f"OPENAI_API_KEY 설정: {'예' if os.environ.get('OPENAI_API_KEY') else '아니오'}")
-    print(f"LLM provider: {config.llm_provider}")
-    print(f"LLM model: {config.llm_model}")
-    print(f"LLM required: {config.llm_required}")
-    print(f"LLM max retries: {config.llm_max_retries}")
-    print(f"LLM backoff seconds: {config.llm_backoff_seconds}")
-    print(f"LLM strict JSON: {config.llm_strict_json}")
-    print(f"Sandbox mode: {config.sandbox_mode}")
-    print(f"Sandbox image: {config.sandbox_image}")
-    print(f"Sandbox timeout: {config.sandbox_timeout_sec}s")
-    print(f"max file bytes: {config.max_file_bytes}")
-    print("Gemini API 기본 사용: GEMINI_API_KEY 또는 GOOGLE_API_KEY를 설정하세요.")
-    print("필요 시 --llm-provider off/openai/auto로 변경할 수 있습니다.")
+    print("")
+    print("  guardit 환경 점검")
+    print("  " + "─" * 30)
+    print("")
+    _check = lambda name, ok: f"  {'✓' if ok else '✗'} {name}: {'설정됨' if ok else '미설정'}"
+    print(_check("GITHUB_TOKEN", bool(config.github_token)))
+    print(_check("GEMINI_API_KEY", bool(os.environ.get('GEMINI_API_KEY'))))
+    print(_check("GOOGLE_API_KEY", bool(os.environ.get('GOOGLE_API_KEY'))))
+    print(_check("OPENAI_API_KEY", bool(os.environ.get('OPENAI_API_KEY'))))
+    print("")
+    print(f"  LLM provider:   {config.llm_provider}")
+    print(f"  LLM model:      {config.llm_model}")
+    print(f"  LLM required:   {config.llm_required}")
+    print(f"  Sandbox mode:   {config.sandbox_mode}")
+    print(f"  Sandbox image:  {config.sandbox_image}")
+    print(f"  Sandbox timeout: {config.sandbox_timeout_sec}s")
+    print("")
     return 0
