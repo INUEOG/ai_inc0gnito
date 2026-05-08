@@ -1,5 +1,5 @@
 {
-  "benign_repo": "SAFE",
-  "malicious_repo": "BLOCK",
-  "suspicious_repo": "QUARANTINE"
+  "benign": "SAFE",
+  "suspicious": "SUSPICIOUS",
+  "malicious": "MALICIOUS"
 }

@@ -1,0 +1,7 @@
+{
+  "name": "telemetry-tool",
+  "version": "1.0.0",
+  "scripts": {
+    "prepare": "node scripts/telemetry.js"
+  }
+}

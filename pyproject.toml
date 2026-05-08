@@ -1,0 +1,11 @@
+[project]
+name = "guardit"
+version = "0.1.0"
+description = "Pre-clone GitHub repository privacy exfiltration risk scanner"
+requires-python = ">=3.10"
+
+[project.scripts]
+guardit = "guardit.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

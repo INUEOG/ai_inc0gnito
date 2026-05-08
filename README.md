@@ -1,66 +1,89 @@
-# ai-github-git-clone-ai-cli
+# Guardit
 
-AI 기반 GitHub 레포지토리 사전 개인정보 유출 차단 CLI 프로토타입입니다.
+Guardit은 GitHub 레포지토리를 `git clone`하기 전에 개발자 개인정보 탈취 위험을 분석하는 pre-clone 보안 CLI입니다.
 
-`git clone` 전에 레포지토리 파일 트리와 자동 실행 가능 파일을 먼저 검사하고,
-룰 기반 정적 분석, AST 변수 흐름 분석, 샌드박스형 행동 추정, GitHub 작성자 신뢰도,
-Gemini CLI 기반 LLM 의도 판단을 합산해 clone 진행 여부를 결정합니다.
+핵심 공식은 다음과 같습니다.
+
+```text
+자동 실행 트리거 + 민감정보 접근 + 외부 전송 = MALICIOUS
+```
+
+LLM은 최종 탐지 엔진이 아니라 의도 분석과 설명 생성을 돕는 보조 계층입니다. 기본 동작은 룰 기반 evidence, 경량 AST/흐름 분석, 샌드박스형 행동 추정, 정량 점수 시스템으로 수행됩니다.
 
 ## 빠른 실행
 
-```powershell
-py -m guardclone demo
-py -m guardclone doctor
-py -m guardclone scan .\demo_repos\malicious_repo --ai gemini-api
-py -m guardclone clone .\demo_repos\suspicious_repo .\safe-copy
-py -m guardclone eval .\demo_repos
+```bash
+python -m guardit scan demo_repos/malicious
+python -m guardit clone https://github.com/owner/repo
+python -m guardit clone https://github.com/owner/repo safe-repo --choice clean
+python -m guardit eval demo_repos
+python -m guardit doctor
 ```
 
-`clone` 명령은 기본적으로 `--choice ask` 모드입니다.
-위험 판정이 나오면 CLI가 사용자에게 직접 3가지 선택지를 묻습니다.
+패키지로 설치하면 다음처럼 실행할 수 있습니다.
+
+```bash
+pip install -e .
+guardit clone https://github.com/owner/repo
+```
+
+## 분석 대상
+
+1차 MVP 필수 대상:
+
+- `.vscode/tasks.json`
+- `package.json`
+- `scripts/*.js`
+- `scripts/*.sh`
+
+확장 후보:
+
+- `.vscode/launch.json`
+- `.devcontainer/devcontainer.json`
+- `setup.py`
+- `pyproject.toml`
+- `Makefile`
+- `.husky/*`
+- `.githooks/*`
+- `pre-commit-config.yaml`
+
+## 결과
+
+스캔 결과는 터미널에 출력되고 JSON 리포트가 저장됩니다.
 
 ```text
-1. clone 차단
-2. 위험 파일 제외 후 clone
-3. 위험 감수 후 진행
+results/guardit-report.json
 ```
 
-`GEMINI_API_KEY` 또는 `GOOGLE_API_KEY`가 설정되어 있으면 Gemini REST API를 직접 호출합니다.
-API 키가 없으면 Gemini CLI를 시도하고, 둘 다 실패하면 룰 기반/AST/샌드박스형 분석 결과로 자동 대체합니다.
+평가 결과는 다음 파일에 저장됩니다.
 
-```powershell
-$env:GEMINI_API_KEY="발급받은_API_KEY"
-py -m guardclone scan .\demo_repos\malicious_repo --ai gemini-api
+```text
+results/evaluation-report.json
 ```
 
-Gemini가 PATH에 잡히지 않는 Windows 환경에서는 다음처럼 직접 명령을 지정할 수 있습니다.
+## LLM 사용
 
-```powershell
-py -m guardclone scan .\demo_repos\malicious_repo --gemini-command "npx -y @google/gemini-cli"
+기본값은 LLM 미사용입니다.
+
+```bash
+OPENAI_API_KEY=... python -m guardit scan demo_repos/malicious --llm-provider openai
 ```
 
-## 주요 기능
+LLM 입력 전 evidence 문자열은 `guardit/ai/redact.py`에서 마스킹됩니다. `risk_adjustment`는 `-10~+10`으로 제한되며 최종 점수를 직접 결정하지 않습니다.
 
-- `.vscode/tasks.json`, `package.json`, `.git/hooks`, `.husky`, 설치 스크립트 등 자동 실행 위험 파일 우선 검사
-- `curl`, `Invoke-WebRequest`, `~/.aws`, `~/.ssh`, 브라우저 프로필, `eval`, `exec`, base64 난독화 등 개인정보 탈취 지표 탐지
-- Python AST 기반 변수 흐름 추적
-- 실행 없이 위험 행동을 모델링하는 샌드박스형 분석
-- GitHub 작성자 계정 생성일, 팔로워, 공개 레포 수, 스타/포크 기반 신뢰도 점수
-- Gemini CLI 기반 LLM 의도 판단
-- 위험 점수, 탈취 가능 정보, 악성 위치, 권장 조치 출력
-- 검사 결과에 따라 차단/위험 파일 제외 clone/위험 감수 후 진행 수행
-- 데모 데이터셋 기반 정탐률, 오탐률, 처리 시간 평가
+## Clean Clone
 
-## 심사용 시나리오
+위험 파일 제외 clone은 GitHub zipball을 다운로드해 위험 파일을 제외하고 압축 해제합니다. 이 방식은 신뢰하지 않는 레포를 전체 clone하지 않는 장점이 있지만, git history를 보존하지 못할 수 있습니다.
 
-1. 참가자가 의심스러운 GitHub 레포 URL 또는 로컬 경로를 입력합니다.
-2. GuardClone이 자동 실행 파일을 먼저 찾습니다.
-3. 위험 파일이 없으면 빠르게 안전 판정을 반환하고 clone을 진행합니다.
-4. 위험 파일이 있으면 개인정보 접근, 외부 전송, 난독화, 프로세스 실행을 분석합니다.
-5. Gemini CLI가 분석 근거를 바탕으로 코드의 실행 의도와 개인정보 탈취 가능성을 판단합니다.
-6. 최종 위험 점수와 근거를 보여주고 사용자가 3가지 조치 중 하나를 선택합니다.
+## 문서
 
-## 한계
+설계와 한계는 `docs/`에 정리되어 있습니다.
 
-본 프로토타입은 심사용으로 안전하게 설계되어 실제 악성 코드를 실행하지 않습니다.
-Docker/strace가 있는 운영 환경에서는 `sandbox.py`의 행동 모델을 실제 컨테이너 실행 로그로 교체할 수 있습니다.
+- `docs/project_plan.md`
+- `docs/architecture.md`
+- `docs/threat_model.md`
+- `docs/scoring_system.md`
+- `docs/test_plan.md`
+- `docs/evaluation_metrics.md`
+- `docs/checklist.md`
+- `docs/implementation_log.md`
