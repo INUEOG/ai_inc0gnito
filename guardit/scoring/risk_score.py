@@ -6,6 +6,7 @@ from guardit.models import Evidence, LLMJudgement, RepoMetadata, RiskLevel, Sand
 LEVELS: list[tuple[int, RiskLevel]] = [
     (70, "MALICIOUS"),
     (30, "SUSPICIOUS"),
+    (20, "WATCH"),
     (0, "SAFE"),
 ]
 
@@ -41,14 +42,26 @@ def score_report(
     if has_flow:
         notes.append("source -> sink 흐름 탐지")
 
-    sandbox_file = min(40, sum(log.score for log in sandbox_logs if log.action == "dummy_credential_access"))
-    sandbox_net = min(25, sum(log.score for log in sandbox_logs if log.action == "network_connect_attempt"))
-    if sandbox_file:
-        score += sandbox_file
-        notes.append(f"sandbox dummy credential 접근: +{sandbox_file}")
-    if sandbox_net:
-        score += sandbox_net
-        notes.append(f"sandbox network connect 시도: +{sandbox_net}")
+    inferred_file = min(20, sum(log.score for log in sandbox_logs if log.origin == "inferred" and log.action == "dummy_credential_access"))
+    observed_file = min(40, sum(log.score for log in sandbox_logs if log.origin == "observed" and log.action in {"dummy_credential_access", "dummy_credential_io"}))
+    inferred_net = min(20, sum(log.score for log in sandbox_logs if log.origin == "inferred" and log.action == "network_connect_attempt"))
+    observed_net = min(40, sum(log.score for log in sandbox_logs if log.origin == "observed" and log.action == "network_connect_attempt"))
+    observed_proc = min(20, sum(log.score for log in sandbox_logs if log.origin == "observed" and log.action == "process_spawn"))
+    if inferred_file:
+        score += inferred_file
+        notes.append(f"inferred credential access: +{inferred_file}")
+    if observed_file:
+        score += observed_file
+        notes.append(f"observed credential access: +{observed_file}")
+    if inferred_net:
+        score += inferred_net
+        notes.append(f"inferred network attempt: +{inferred_net}")
+    if observed_net:
+        score += observed_net
+        notes.append(f"observed network attempt: +{observed_net}")
+    if observed_proc:
+        score += observed_proc
+        notes.append(f"observed process execution: +{observed_proc}")
 
     multiplier = _trust_multiplier(metadata.author_trust.score)
     if score and multiplier != 1.0:
@@ -56,10 +69,16 @@ def score_report(
         score = int(round(score * multiplier))
         notes.append(f"작성자 신뢰도 보조 multiplier: {multiplier:.2f} ({before} -> {score})")
 
-    forced = has_auto_trigger and has_secret_access and (has_external_sink or has_command_execution)
+    forced = has_auto_trigger and has_secret_access and has_external_sink
     if forced:
         score = max(score, 70)
-        notes.append("강제 규칙 적용: 자동 실행 + 민감정보 접근 + 외부 전송/명령 실행")
+        notes.append("강제 규칙 적용: 자동 실행 + 민감정보 접근 + 외부 전송")
+    elif has_auto_trigger and has_secret_access and not has_external_sink and score > 69:
+        score = 69
+        notes.append("외부 전송 근거가 없어 credential access-only 상한을 적용")
+    elif has_auto_trigger and has_command_execution and not has_secret_access and not has_external_sink and score > 29:
+        score = 29
+        notes.append("자동 실행 + benign command는 warning 상한을 적용")
     elif not has_secret_access and score > 69:
         score = 69
         notes.append("민감정보 접근 근거가 없어 MALICIOUS 상한을 적용")

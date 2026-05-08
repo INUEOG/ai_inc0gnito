@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--llm-provider", choices=["off", "openai"], default=None)
     scan.add_argument("--llm-model", default=None)
     scan.add_argument("--threshold", type=int, default=70, help="위험 종료 코드 기준 점수")
+    scan.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
 
     clone = sub.add_parser("clone", help="분석 후 사용자 선택에 따라 clone을 진행합니다.")
     clone.add_argument("repo_url")
@@ -39,10 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     clone.add_argument("--llm-provider", choices=["off", "openai"], default=None)
     clone.add_argument("--llm-model", default=None)
     clone.add_argument("--threshold", type=int, default=70, help="auto 선택 시 차단 기준 점수")
+    clone.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="sandbox 분석 방식")
 
     eval_cmd = sub.add_parser("eval", help="라벨 기반 정량 평가를 실행합니다.")
     eval_cmd.add_argument("dataset", nargs="?", default="demo_repos")
     eval_cmd.add_argument("--output", default="results/eval_result.json", help="평가 JSON 저장 경로")
+    eval_cmd.add_argument("--sandbox", choices=["off", "static", "docker"], default=None, help="평가 시 sandbox 분석 방식")
 
     report_cmd = sub.add_parser("report", help="저장된 JSON 리포트를 사람이 읽기 쉽게 출력합니다.")
     report_cmd.add_argument("result", nargs="?", default="results/guardit-report.json")
@@ -67,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         return _perform_action(args.repo_url, args.destination, action, report, config.github_token)
 
     if args.command == "eval":
-        result = evaluate_dataset(Path(args.dataset).resolve(), Path(args.output))
+        result = evaluate_dataset(Path(args.dataset).resolve(), Path(args.output), sandbox_mode=args.sandbox)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         print(f"평가 JSON: {args.output}")
         print("평가 Markdown: results/eval_report.md")
@@ -88,7 +91,7 @@ def _run_scan(source: str, config, quiet: bool = False) -> object:
     report = scan_source(source, config)
     _progress("[2/5] 자동 실행 후보 파일 탐지 완료", quiet)
     _progress("[3/5] 정적 분석 완료", quiet)
-    _progress("[4/5] 샌드박스 분석 완료", quiet)
+    _progress(f"[4/5] sandbox mode={config.sandbox_mode} 분석 완료", quiet)
     _progress("[5/5] AI 의도 분석 완료", quiet)
     return report
 
@@ -161,10 +164,14 @@ def _config_from_args(args):
     config = load_config()
     provider = getattr(args, "llm", None) or getattr(args, "llm_provider", None) or config.llm_provider
     model = getattr(args, "llm_model", None) or config.llm_model
+    sandbox_mode = getattr(args, "sandbox", None) or config.sandbox_mode
     return config.__class__(
         max_candidate_files=config.max_candidate_files,
         max_file_bytes=config.max_file_bytes,
         sandbox_threshold=config.sandbox_threshold,
+        sandbox_mode=sandbox_mode,
+        sandbox_timeout_sec=config.sandbox_timeout_sec,
+        sandbox_image=config.sandbox_image,
         results_dir=config.results_dir,
         logs_dir=config.logs_dir,
         github_token=config.github_token,
@@ -187,6 +194,9 @@ def _doctor(config) -> int:
     print(f"GITHUB_TOKEN 설정: {'예' if config.github_token else '아니오'}")
     print(f"LLM provider: {config.llm_provider}")
     print(f"LLM model: {config.llm_model}")
+    print(f"Sandbox mode: {config.sandbox_mode}")
+    print(f"Sandbox image: {config.sandbox_image}")
+    print(f"Sandbox timeout: {config.sandbox_timeout_sec}s")
     print(f"max file bytes: {config.max_file_bytes}")
     print("OPENAI_API_KEY 설정 시 --llm-provider openai를 사용할 수 있습니다.")
     return 0

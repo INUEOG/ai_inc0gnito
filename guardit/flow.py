@@ -27,6 +27,18 @@ def build_execution_flows(candidates: list[CandidateFile], evidence: list[Eviden
     return _dedupe(flows)
 
 
+def execution_commands(flows: list[ExecutionFlow]) -> list[str]:
+    commands: list[str] = []
+    for flow in flows:
+        for step in flow.process_steps:
+            command = step.split(":", 1)[1].strip() if ":" in step and step.split(":", 1)[0] in {"preinstall", "install", "postinstall", "prepare"} else step.strip()
+            if _is_limited_command(command):
+                commands.append(command)
+        if flow.executed_file:
+            commands.append(_command_for_file(flow.executed_file))
+    return _unique([command for command in commands if command])
+
+
 def _flows_from_tasks(candidate: CandidateFile, by_path: dict[str, CandidateFile], evidence: list[Evidence]) -> list[ExecutionFlow]:
     flows: list[ExecutionFlow] = []
     try:
@@ -109,6 +121,24 @@ def _flow(trigger: str, executed: str | None, evidence: list[Evidence], process_
 def _extract_script_refs(command: str) -> list[str]:
     refs = [match.group(1).strip("'\"") for match in SCRIPT_REF_RE.finditer(command)]
     return [ref for ref in refs if "://" not in ref and not ref.startswith("//")]
+
+
+def _is_limited_command(command: str) -> bool:
+    return bool(re.match(r"^(node|python|python3|bash|sh|pwsh|powershell)\s+[\w./-]+\.(js|mjs|cjs|py|sh|bash|zsh|ps1)\b", command))
+
+
+def _command_for_file(path: str) -> str:
+    if path.endswith((".js", ".mjs", ".cjs")):
+        return f"node {shlex_quote(path)}"
+    if path.endswith(".py"):
+        return f"python {shlex_quote(path)}"
+    if path.endswith((".sh", ".bash", ".zsh")):
+        return f"sh {shlex_quote(path)}"
+    return ""
+
+
+def shlex_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _normalize_ref(ref: str) -> str:

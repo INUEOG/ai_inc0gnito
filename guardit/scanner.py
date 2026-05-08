@@ -9,8 +9,8 @@ from .config import GuarditConfig
 from .file_filter import filter_candidate_files, is_candidate_path, looks_binary
 from .flow import build_execution_flows
 from .github_client import GitHubClient
-from .models import AuthorTrust, CandidateFile, CandidateSummary, RepoFile, RepoMetadata, ScanReport
-from .sandbox import SandboxRunner
+from .models import AuthorTrust, CandidateFile, CandidateSummary, Evidence, RepoFile, RepoMetadata, ScanReport, ScanWarning
+from .sandbox import DockerSandboxRunner, StaticBehaviorAnalyzer
 from .scoring import score_report
 from .static_analyzer import analyze_candidate
 
@@ -29,12 +29,26 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
     execution_flows = build_execution_flows(candidates, evidence)
     provisional = score_report(metadata, evidence, [], None)
     sandbox_logs = []
-    sandbox_runner = SandboxRunner()
-    if provisional.final_score >= config.sandbox_threshold:
-        sandbox_logs = sandbox_runner.analyze(candidates, evidence)
-    sandbox_summary = sandbox_runner.summarize(sandbox_logs)
+    if config.sandbox_mode == "off":
+        sandbox_summary = StaticBehaviorAnalyzer().summarize([])
+        sandbox_summary.mode = "off"
+    elif config.sandbox_mode == "docker" and provisional.final_score >= config.sandbox_threshold:
+        sandbox_logs, sandbox_summary = DockerSandboxRunner(
+            image=config.sandbox_image,
+            timeout_sec=config.sandbox_timeout_sec,
+        ).analyze(candidates, evidence, execution_flows)
+    elif config.sandbox_mode == "docker":
+        sandbox_summary = StaticBehaviorAnalyzer().summarize([])
+        sandbox_summary.mode = "docker-sandbox-skipped"
+        sandbox_summary.fallback_reason = f"점수 {provisional.final_score}가 sandbox threshold {config.sandbox_threshold} 미만입니다."
+    else:
+        sandbox_runner = StaticBehaviorAnalyzer()
+        if provisional.final_score >= config.sandbox_threshold:
+            sandbox_logs = sandbox_runner.analyze(candidates, evidence)
+        sandbox_summary = sandbox_runner.summarize(sandbox_logs)
 
     base_after_sandbox = score_report(metadata, evidence, sandbox_logs, None)
+    warnings = _build_warnings(evidence)
     llm = LLMJudge(provider=config.llm_provider, model=config.llm_model).judge(
         suspicious_files=[candidate.path for candidate in candidates],
         evidence=evidence,
@@ -51,11 +65,47 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
         sandbox_logs=sandbox_logs,
         sandbox_summary=sandbox_summary,
         execution_flows=execution_flows,
+        warnings=warnings,
         llm=llm,
         score=score,
         elapsed_ms=elapsed_ms,
         suspected_secrets=_suspected_secrets(evidence),
     )
+
+
+def _build_warnings(evidence: list[Evidence]) -> list[ScanWarning]:
+    has_secret = any(item.category == "secret_access" for item in evidence)
+    has_sink = any(item.category == "external_sink" for item in evidence)
+    warnings: list[ScanWarning] = []
+    for item in evidence:
+        if item.category != "auto_trigger":
+            continue
+        if item.type == "auto_trigger" and not has_secret and not has_sink:
+            warnings.append(
+                ScanWarning(
+                    file=item.file,
+                    line=item.line,
+                    type="auto_run_without_exfiltration",
+                    message=(
+                        "자동 실행 설정이 있습니다. 현재 개인정보 접근 또는 외부 전송 흐름은 탐지되지 않았지만 "
+                        "폴더를 열거나 설치 단계에서 실행될 수 있으므로 검토가 필요합니다."
+                    ),
+                    severity="medium",
+                )
+            )
+    return _dedupe_warnings(warnings)
+
+
+def _dedupe_warnings(warnings: list[ScanWarning]) -> list[ScanWarning]:
+    seen: set[tuple[str, int, str]] = set()
+    result: list[ScanWarning] = []
+    for warning in warnings:
+        key = (warning.file, warning.line, warning.type)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(warning)
+    return result
 
 
 def _collect_github(source: str, config: GuarditConfig) -> tuple[RepoMetadata, list[CandidateFile]]:

@@ -75,20 +75,37 @@ class Evidence:
 
 
 @dataclass
+class ScanWarning:
+    file: str
+    line: int
+    type: str
+    message: str
+    severity: Severity = "medium"
+
+
+@dataclass
 class SandboxLog:
     file: str
     line: int
     action: str
     detail: str
     score: int
+    origin: str = "inferred"
+    syscall: str | None = None
 
 
 @dataclass
 class SandboxSummary:
-    mode: str = "sandbox-like-static-inference"
-    opened_files: list[str] = field(default_factory=list)
-    network_attempts: list[str] = field(default_factory=list)
-    executed_processes: list[str] = field(default_factory=list)
+    mode: str = "static-behavior-inference"
+    is_real_sandbox: bool = False
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    inferred_opened_files: list[str] = field(default_factory=list)
+    inferred_network_attempts: list[str] = field(default_factory=list)
+    inferred_processes: list[str] = field(default_factory=list)
+    observed_opened_files: list[str] = field(default_factory=list)
+    observed_network_attempts: list[str] = field(default_factory=list)
+    observed_processes: list[str] = field(default_factory=list)
     dummy_credentials_accessed: bool = False
 
 
@@ -135,6 +152,7 @@ class ScanReport:
     sandbox_logs: list[SandboxLog]
     sandbox_summary: SandboxSummary
     execution_flows: list[ExecutionFlow]
+    warnings: list[ScanWarning]
     llm: LLMJudgement
     score: ScoreBreakdown
     elapsed_ms: float
@@ -148,6 +166,7 @@ class ScanReport:
             "sandbox_logs": [asdict(item) for item in self.sandbox_logs],
             "sandbox_summary": asdict(self.sandbox_summary),
             "execution_flows": [asdict(item) for item in self.execution_flows],
+            "warnings": [asdict(item) for item in self.warnings],
             "llm": asdict(self.llm),
             "score": asdict(self.score),
             "elapsed_ms": round(self.elapsed_ms, 2),

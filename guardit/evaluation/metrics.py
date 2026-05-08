@@ -13,7 +13,7 @@ LABELS = ["SAFE", "SUSPICIOUS", "MALICIOUS"]
 BLOCKING = {"SUSPICIOUS", "MALICIOUS"}
 
 
-def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-report.json")) -> dict:
+def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-report.json"), sandbox_mode: str | None = None) -> dict:
     labels_path = dataset / "labels.json"
     if not labels_path.exists():
         raise FileNotFoundError(f"labels.json을 찾을 수 없습니다: {labels_path}")
@@ -24,6 +24,9 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
         max_candidate_files=config.max_candidate_files,
         max_file_bytes=config.max_file_bytes,
         sandbox_threshold=config.sandbox_threshold,
+        sandbox_mode=sandbox_mode or config.sandbox_mode,
+        sandbox_timeout_sec=config.sandbox_timeout_sec,
+        sandbox_image=config.sandbox_image,
         results_dir=config.results_dir,
         logs_dir=config.logs_dir,
         github_token=config.github_token,

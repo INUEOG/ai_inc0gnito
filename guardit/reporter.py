@@ -44,6 +44,21 @@ def render_saved_report(path: Path) -> str:
             lines.append(f"  -> 외부 전송: {sink}")
         lines.append(f"  risk: {flow.get('risk')}")
     lines.append("")
+    warnings = payload.get("warnings", [])
+    if warnings:
+        lines.append("주의:")
+        for warning in warnings[:10]:
+            lines.append(f"- {warning.get('file')}:{warning.get('line')} {warning.get('message')}")
+        lines.append("")
+    sandbox = payload.get("sandbox_summary", {})
+    if sandbox:
+        lines.append("Sandbox Mode:")
+        lines.append(f"- mode: {sandbox.get('mode')}")
+        lines.append(f"- real sandbox: {sandbox.get('is_real_sandbox')}")
+        lines.append(f"- fallback: {sandbox.get('fallback_used')}")
+        if sandbox.get("fallback_reason"):
+            lines.append(f"- fallback reason: {sandbox.get('fallback_reason')}")
+        lines.append("")
     lines.append("주요 evidence:")
     for item in payload.get("evidence", [])[:15]:
         lines.append(f"- {item.get('file')}:{item.get('line')} [{item.get('type')}] {item.get('description')}")
@@ -83,6 +98,11 @@ def render_text(report: ScanReport) -> str:
                 lines.append(f"  -> 실행/우회: {process}")
             lines.append(f"  risk: {flow.risk}")
 
+    if report.warnings:
+        lines.extend(["", "[주의]"])
+        for warning in report.warnings[:10]:
+            lines.append(f"- {warning.file}:{warning.line} {warning.message}")
+
     lines.extend(["", "탐지 근거:"])
     if report.evidence:
         for item in report.evidence[:15]:
@@ -96,11 +116,31 @@ def render_text(report: ScanReport) -> str:
         lines.extend(f"- {item}" for item in report.suspected_secrets)
 
     if report.sandbox_logs:
-        lines.extend(["", "샌드박스형 행동 추정:"])
+        lines.extend(["", "Sandbox Mode:"])
         lines.append(f"- mode: {report.sandbox_summary.mode}")
+        lines.append(f"- real sandbox: {report.sandbox_summary.is_real_sandbox}")
+        lines.append(f"- fallback used: {report.sandbox_summary.fallback_used}")
+        if report.sandbox_summary.fallback_reason:
+            lines.append(f"- fallback reason: {report.sandbox_summary.fallback_reason}")
         lines.append(f"- dummy credential accessed: {report.sandbox_summary.dummy_credentials_accessed}")
-        for log in report.sandbox_logs[:10]:
-            lines.append(f"- {log.file}:{log.line} {log.action} - {log.detail}")
+        inferred = [log for log in report.sandbox_logs if log.origin == "inferred"]
+        observed = [log for log in report.sandbox_logs if log.origin == "observed"]
+        if inferred:
+            lines.append("")
+            lines.append("[inferred]")
+            for log in inferred[:10]:
+                lines.append(f"- {log.file}:{log.line} {log.action} - {log.detail}")
+        if observed:
+            lines.append("")
+            lines.append("[observed]")
+            for log in observed[:10]:
+                syscall = f" ({log.syscall})" if log.syscall else ""
+                lines.append(f"- {log.file}:{log.line} {log.action}{syscall} - {log.detail}")
+    elif report.sandbox_summary.mode in {"off", "docker-sandbox-skipped"}:
+        lines.extend(["", "Sandbox Mode:"])
+        lines.append(f"- mode: {report.sandbox_summary.mode}")
+        if report.sandbox_summary.fallback_reason:
+            lines.append(f"- reason: {report.sandbox_summary.fallback_reason}")
 
     lines.extend(
         [

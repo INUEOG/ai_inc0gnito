@@ -1,0 +1,35 @@
+# Guardit 3차 구현 체크리스트
+
+- [x] 기존 sandbox-like 구조 확인
+- [x] 실제 Docker sandbox 설계
+- [x] `/docs/3/PROJECT_PLAN.md` 작성
+- [x] `/docs/3/IMPLEMENTATION_CHECKLIST.md` 작성
+- [x] CLI sandbox 옵션 추가
+- [x] `StaticBehaviorAnalyzer` 명칭/구조 정리
+- [x] `DockerSandboxRunner` 구현
+- [x] 더미 credential 환경 구성
+- [x] Docker 제한 옵션 적용
+- [x] strace 실행 및 로그 수집
+- [x] strace parser 구현/보완
+- [x] observed evidence 구조화
+- [x] inferred evidence와 observed evidence 분리
+- [x] Docker unavailable fallback 구현
+- [x] 자동 실행 warning 정책 보완
+- [x] reporter 출력 개선
+- [x] risk score 조정
+- [x] README 수정
+- [x] `/docs/3/IMPLEMENTATION_REPORT.md` 작성
+- [x] `/docs/3/TEST_REPORT.md` 작성
+- [x] `/docs/3/SANDBOX_DESIGN.md` 작성
+- [x] `/docs/3/DEMO_SCENARIO.md` 작성
+- [x] auto-run only 테스트 추가
+- [x] auto-run + benign build script 테스트 추가
+- [x] auto-run + credential access 테스트 추가
+- [x] auto-run + external POST 테스트 추가
+- [x] auto-run + credential access + external POST 테스트 추가
+- [x] docker sandbox unavailable fallback 테스트 추가
+- [x] docker sandbox success 테스트 추가
+- [x] strace parser 테스트 추가
+- [x] `python3 -m unittest discover -s tests -q` 실행
+- [x] `python3 -m compileall -q guardit tests` 실행
+- [x] `python3 -m guardit eval demo_repos --output results/eval_result.json` 실행
