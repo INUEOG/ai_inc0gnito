@@ -9,3 +9,12 @@ guardit = "guardit.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# ... 기존 내용 유지 ...
+
+[tool.setuptools.packages.find]
+# 'guardit' 폴더만 실제 패키지로 인식하도록 설정합니다.
+include = ["guardit*"]
+
+# 만약 [tool.setuptools] 섹션이 없다면 아래처럼 작성해도 됩니다.
+# [tool.setuptools]
+# packages = ["guardit"]
