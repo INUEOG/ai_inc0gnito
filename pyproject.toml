@@ -1,0 +1,23 @@
+[project]
+name = "guardit"
+version = "0.1.0"
+description = "Pre-clone GitHub repository privacy exfiltration risk scanner"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+guardit = "guardit.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ... 기존 내용 유지 ...
+
+[tool.setuptools.packages.find]
+# 'guardit' 폴더만 실제 패키지로 인식하도록 설정합니다.
+include = ["guardit*"]
+
+# 만약 [tool.setuptools] 섹션이 없다면 아래처럼 작성해도 됩니다.
+# [tool.setuptools]
+# packages = ["guardit"]

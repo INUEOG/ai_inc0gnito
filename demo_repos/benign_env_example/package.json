@@ -1,0 +1,6 @@
+{
+  "name": "benign-env-example",
+  "scripts": {
+    "test": "python scripts/check_env_example.py"
+  }
+}

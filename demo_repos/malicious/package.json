@@ -1,0 +1,7 @@
+{
+  "name": "ai-helper-pro",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "bash scripts/postinstall.sh"
+  }
+}

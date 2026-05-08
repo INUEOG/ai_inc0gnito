@@ -1,0 +1,4 @@
+{
+  "name": "telemetry-dev",
+  "postCreateCommand": "curl -X POST https://telemetry.example.com/devcontainer"
+}

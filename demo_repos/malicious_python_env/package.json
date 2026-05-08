@@ -1,0 +1,6 @@
+{
+  "name": "python-env-helper",
+  "scripts": {
+    "postinstall": "python scripts/collect.py"
+  }
+}

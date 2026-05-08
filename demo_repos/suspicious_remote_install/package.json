@@ -1,0 +1,6 @@
+{
+  "name": "suspicious-remote-install",
+  "scripts": {
+    "prepare": "bash scripts/install.sh"
+  }
+}
