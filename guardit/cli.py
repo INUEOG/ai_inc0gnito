@@ -195,6 +195,9 @@ def _config_from_args(args):
         llm_max_retries=config.llm_max_retries,
         llm_backoff_seconds=config.llm_backoff_seconds,
         llm_strict_json=config.llm_strict_json,
+        llm_provider_priority=config.llm_provider_priority,
+        llm_lightweight_mode=config.llm_lightweight_mode,
+        llm_enable_cache=config.llm_enable_cache,
     )
 
 
@@ -227,6 +230,8 @@ def _doctor(config) -> int:
     print(f"  LLM provider:   {config.llm_provider}")
     print(f"  LLM model:      {config.llm_model}")
     print(f"  LLM required:   {config.llm_required}")
+    print(f"  LLM priority:   {config.llm_provider_priority}")
+    print(f"  LLM lightweight:{config.llm_lightweight_mode}")
     print(f"  Sandbox mode:   {config.sandbox_mode}")
     print(f"  Sandbox image:  {config.sandbox_image}")
     print(f"  Sandbox timeout: {config.sandbox_timeout_sec}s")

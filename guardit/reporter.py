@@ -110,7 +110,7 @@ def render_saved_report(path: Path) -> str:
         if sandbox.get("fallback_reason"):
             lines.append(f"  {color('·', FG_YELLOW)} Sandbox status: failed")
             lines.append(f"    Reason: {sandbox.get('fallback_reason')}")
-        if not sandbox.get("observed_opened_files") and not sandbox.get("observed_network_attempts") and not sandbox.get("observed_processes"):
+        if sandbox.get("is_real_sandbox") and not sandbox.get("observed_opened_files") and not sandbox.get("observed_network_attempts") and not sandbox.get("observed_processes"):
             lines.append(f"  {color('✓', FG_GREEN)} suspicious behavior not observed")
             lines.append(f"  {color('✓', FG_GREEN)} credential access not observed")
             lines.append(f"  {color('✓', FG_GREEN)} external network attempt not observed")
@@ -134,9 +134,11 @@ def render_saved_report(path: Path) -> str:
         confidence = int(round(float(llm.get("confidence") or 0) * 100))
         lines.append(f"  판정     {color(verdict, f'{BOLD}{v_style}')}")
         if llm.get("used"):
+            lines.append(f"  상태     {llm.get('status')}")
+            lines.append(f"  provider {llm.get('provider')}")
             lines.append(f"  신뢰도   {bar(confidence, 100, v_style)} {color(f'{confidence}%', v_style)}")
         else:
-            lines.append(f"  {color('AI 미사용 — 규칙 기반 안전 판정', DIM)}")
+            lines.append(f"  {color('AI provider disabled — local safety analysis', DIM)}")
         if llm.get("reason"):
             lines.append("")
             lines.append(f"  {color('근거', BOLD)}")
@@ -222,7 +224,7 @@ def render_text(report: ScanReport) -> str:
             for log in observed[:8]:
                 syscall = f" ({log.syscall})" if log.syscall else ""
                 lines.append(f"- {log.file}:{log.line} {log.action}{syscall} — {log.detail}")
-    if not observed:
+    if report.sandbox_summary.is_real_sandbox and not observed:
         lines.append("")
         lines.append("[observed] 실제 행위")
         lines.append("- suspicious behavior not observed")
@@ -233,11 +235,14 @@ def render_text(report: ScanReport) -> str:
         "",
         "──── AI 분석 ────",
         f"AI 판단: {report.llm.verdict}",
+        f"상태: {report.llm.status}",
+        f"provider: {report.llm.provider}",
+        f"attempts: {report.llm.attempts}/{report.llm.max_attempts}",
         f"신뢰도: {report.llm.confidence:.2f}",
         f"이유: {report.llm.reason}",
     ])
     if not report.llm.used:
-        lines.append("참고: AI 미사용 — 규칙 기반 안전 판정")
+        lines.append("참고: AI provider disabled — local safety analysis")
     if report.llm.error:
         lines.append(f"참고: {report.llm.error}")
 

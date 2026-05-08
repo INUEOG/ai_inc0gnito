@@ -24,14 +24,14 @@ class GuarditCoreTest(unittest.TestCase):
         self.assertTrue(report.score.forced_malicious)
         self.assertTrue(any(item.type == "source_to_sink" for item in report.evidence))
 
-    def test_llm_required_holds_final_verdict_when_llm_fails(self) -> None:
+    def test_llm_required_allows_degraded_ai_after_provider_failure(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             config = load_config()
             config = config.__class__(llm_provider="gemini-api", llm_required=True, llm_backoff_seconds=0)
             report = scan_source(str(Path("demo_repos/benign")), config)
-        self.assertEqual(report.score.risk_level, "UNKNOWN")
-        self.assertFalse(report.llm.used)
-        self.assertEqual(report.llm.status, "failed")
+        self.assertNotEqual(report.score.risk_level, "UNKNOWN")
+        self.assertTrue(report.llm.used)
+        self.assertEqual(report.llm.status, "degraded")
 
 
 if __name__ == "__main__":

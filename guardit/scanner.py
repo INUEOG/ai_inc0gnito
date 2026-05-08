@@ -53,6 +53,8 @@ def scan_source(source: str, config: GuarditConfig, progress: ProgressCallback |
         max_retries=config.llm_max_retries,
         backoff_seconds=config.llm_backoff_seconds,
         strict_json=config.llm_strict_json,
+        provider_priority=config.llm_provider_priority,
+        lightweight_mode=config.llm_lightweight_mode,
     ).judge(
         suspicious_files=[candidate.path for candidate in candidates],
         evidence=evidence,

@@ -21,6 +21,9 @@ class GuarditConfig:
     llm_max_retries: int = 3
     llm_backoff_seconds: float = 1.0
     llm_strict_json: bool = False
+    llm_provider_priority: str = "gemini-api,openai,local-degraded"
+    llm_lightweight_mode: bool = True
+    llm_enable_cache: bool = False
 
 
 def load_config() -> GuarditConfig:
@@ -37,6 +40,9 @@ def load_config() -> GuarditConfig:
         llm_max_retries=max(1, int(os.environ.get("GUARDIT_LLM_MAX_RETRIES", "3"))),
         llm_backoff_seconds=max(0.0, float(os.environ.get("GUARDIT_LLM_BACKOFF_SECONDS", "1"))),
         llm_strict_json=_env_bool("GUARDIT_LLM_STRICT_JSON", False),
+        llm_provider_priority=os.environ.get("GUARDIT_LLM_PROVIDER_PRIORITY", "gemini-api,openai,local-degraded"),
+        llm_lightweight_mode=_env_bool("GUARDIT_LLM_LIGHTWEIGHT_MODE", True),
+        llm_enable_cache=_env_bool("GUARDIT_LLM_ENABLE_CACHE", False),
     )
 
 

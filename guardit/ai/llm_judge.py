@@ -22,6 +22,7 @@ GEMINI_SYSTEM_PROMPT = (
 CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.I | re.S)
 JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
 RAW_RESPONSE_LOG = Path("logs") / "llm_raw_response.txt"
+GEMINI_FALLBACK_MODELS = ("gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b")
 
 
 @dataclass
@@ -31,6 +32,8 @@ class LLMJudge:
     max_retries: int = 3
     backoff_seconds: float = 1.0
     strict_json: bool = False
+    provider_priority: str = "gemini-api,openai,local-degraded"
+    lightweight_mode: bool = True
 
     def judge(
         self,
@@ -48,7 +51,10 @@ class LLMJudge:
             fallback.reason = "LLM provider가 off로 설정되어 정적 분석 근거 기반의 안전 판단을 적용했습니다."
             return fallback
         if self.provider == "gemini-api" or (self.provider in {"auto", "gemini"} and _gemini_api_key()):
-            return self._judge_gemini_api(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
+            result = self._judge_gemini_api(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
+            if result.used:
+                return result
+            return self._provider_fallback(suspicious_files, evidence, sandbox_logs, metadata, rule_score, result)
         if self.provider in {"auto", "gemini"}:
             _mark_llm_fallback(
                 fallback,
@@ -58,9 +64,12 @@ class LLMJudge:
                 notes=["Gemini API key missing"],
                 error="GEMINI_API_KEY 또는 GOOGLE_API_KEY가 없어 LLM 호출을 수행하지 못했습니다.",
             )
-            return fallback
+            return self._provider_fallback(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
         if self.provider == "openai":
-            return self._judge_openai(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
+            result = self._judge_openai(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
+            if result.used:
+                return result
+            return _degraded_ai_judgement(result, result.error or "OpenAI LLM analysis failed.")
         return LLMJudgement("WATCH", 0.0, f"지원하지 않는 LLM provider입니다: {self.provider}", 0, provider="offline-fallback", used=False)
 
     def _judge_gemini_api(
@@ -84,48 +93,57 @@ class LLMJudge:
             )
             return fallback
 
-        payload = _build_evidence_payload(suspicious_files, evidence, sandbox_logs, metadata, rule_score)
+        payloads = [("full", _build_evidence_payload(suspicious_files, evidence, sandbox_logs, metadata, rule_score))]
+        if self.lightweight_mode:
+            payloads.append(("lightweight", _build_lightweight_payload(suspicious_files, evidence, sandbox_logs, metadata, rule_score)))
         notes: list[str] = []
-        max_attempts = max(1, self.max_retries)
+        max_attempts = max(3, self.max_retries)
+        model_candidates = _gemini_model_candidates(self.model)
+        attempt_plan = _gemini_attempt_plan(model_candidates, payloads)
         last_error = ""
         for attempt in range(1, max_attempts + 1):
+            model, payload_mode, payload = attempt_plan[min(attempt - 1, len(attempt_plan) - 1)]
+            label = f"attempt {attempt}/{max_attempts} model={model} mode={payload_mode}"
             try:
-                raw_api_response = self._call_gemini_api(api_key, payload)
+                raw_api_response = self._call_gemini_api(api_key, payload, model=model)
                 result = json.loads(raw_api_response)
                 raw_model_text = _extract_gemini_text(result)
                 parsed, parse_notes = _parse_jsonish(raw_model_text, strict=self.strict_json)
-                notes.extend(f"attempt {attempt}: {note}" for note in parse_notes)
+                notes.extend(f"{label}: {note}" for note in parse_notes)
                 if parsed:
                     judgement = _judgement_from_parsed(
                         parsed,
                         fallback,
                         provider="gemini-api",
-                        model=self.model,
+                        model=model,
                         attempts=attempt,
                         max_attempts=max_attempts,
                         notes=notes,
                     )
+                    if payload_mode == "lightweight":
+                        judgement.status = "lightweight"
+                        judgement.notes.append("Gemini quota/error fallback used lightweight evidence payload")
                     return judgement
                 _save_raw_response(raw_model_text)
                 last_error = f"Gemini API 응답 JSON 파싱 실패. response preview: {_preview(raw_model_text)}"
-                notes.append(f"attempt {attempt}: {last_error}")
+                notes.append(f"{label}: {last_error}")
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:400]
                 last_error = f"Gemini API HTTP {exc.code}: {detail}"
-                notes.append(f"attempt {attempt}: {last_error}")
+                notes.append(f"{label}: {last_error}")
                 if not _retryable_http(exc.code):
                     break
             except json.JSONDecodeError as exc:
                 raw = locals().get("raw_api_response", "")
                 _save_raw_response(raw)
                 last_error = f"Gemini API wrapper JSON 파싱 실패: {exc}. response preview: {_preview(raw)}"
-                notes.append(f"attempt {attempt}: {last_error}")
+                notes.append(f"{label}: {last_error}")
             except (TimeoutError, urllib.error.URLError, OSError) as exc:
                 last_error = f"Gemini API 일시 오류: {exc}"
-                notes.append(f"attempt {attempt}: {last_error}")
+                notes.append(f"{label}: {last_error}")
             if attempt < max_attempts:
                 delay = self.backoff_seconds * (2 ** (attempt - 1))
-                notes.append(f"attempt {attempt}: retry after {delay:.2f}s")
+                notes.append(f"{label}: retry after {delay:.2f}s")
                 if delay > 0:
                     time.sleep(delay)
 
@@ -139,7 +157,7 @@ class LLMJudge:
         )
         return fallback
 
-    def _call_gemini_api(self, api_key: str, payload: dict) -> str:
+    def _call_gemini_api(self, api_key: str, payload: dict, model: str | None = None) -> str:
         body = {
             "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_PROMPT}]},
             "contents": [{"role": "user", "parts": [{"text": _build_gemini_prompt(payload)}]}],
@@ -149,8 +167,9 @@ class LLMJudge:
                 "responseMimeType": "application/json",
             },
         }
+        selected_model = model or self.model
         request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
+            f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model}:generateContent",
             data=json.dumps(body).encode("utf-8"),
             headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
             method="POST",
@@ -207,6 +226,35 @@ class LLMJudge:
 
         return _judgement_from_parsed(parsed, fallback, provider="openai", model=self.model)
 
+    def _provider_fallback(
+        self,
+        suspicious_files: list[str],
+        evidence: list[Evidence],
+        sandbox_logs: list[SandboxLog],
+        metadata: RepoMetadata,
+        rule_score: int,
+        fallback: LLMJudgement,
+    ) -> LLMJudgement:
+        priority = _provider_priority(self.provider_priority)
+        if "openai" in priority and os.environ.get("OPENAI_API_KEY"):
+            fallback.notes.append("provider fallback: gemini-api -> openai")
+            openai_model = os.environ.get("GUARDIT_OPENAI_MODEL") or ("gpt-4.1-mini" if self.model.startswith("gemini-") else self.model)
+            result = LLMJudge(
+                provider="openai",
+                model=openai_model,
+                max_retries=self.max_retries,
+                backoff_seconds=self.backoff_seconds,
+                strict_json=self.strict_json,
+                provider_priority=self.provider_priority,
+                lightweight_mode=self.lightweight_mode,
+            )._judge_openai(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
+            if result.used:
+                result.notes.append("provider fallback succeeded after Gemini failure")
+                return result
+        if "local-degraded" in priority:
+            return _degraded_ai_judgement(fallback, fallback.error or "Primary LLM providers failed.")
+        return fallback
+
 
 def _gemini_api_key() -> str | None:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -226,6 +274,48 @@ def _build_evidence_payload(
             "sandbox_logs": [item.__dict__ for item in sandbox_logs[:30]],
             "author_trust": metadata.author_trust.__dict__,
             "rule_score": rule_score,
+        }
+    )
+
+
+def _build_lightweight_payload(
+    suspicious_files: list[str],
+    evidence: list[Evidence],
+    sandbox_logs: list[SandboxLog],
+    metadata: RepoMetadata,
+    rule_score: int,
+) -> dict:
+    top_evidence = sorted(evidence, key=lambda item: item.score, reverse=True)[:8]
+    observed = [log for log in sandbox_logs if log.origin == "observed"][:8]
+    inferred = [log for log in sandbox_logs if log.origin == "inferred"][:5]
+    return redact_obj(
+        {
+            "payload_mode": "lightweight",
+            "rule_score": rule_score,
+            "repo": {
+                "source": metadata.source,
+                "author_trust_score": metadata.author_trust.score,
+            },
+            "suspicious_files": suspicious_files[:8],
+            "evidence_summary": [
+                {
+                    "file": item.file,
+                    "type": item.type,
+                    "category": item.category,
+                    "severity": item.severity,
+                    "description": item.description,
+                    "score": item.score,
+                }
+                for item in top_evidence
+            ],
+            "observed_summary": [
+                {"action": log.action, "detail": log.detail, "syscall": log.syscall}
+                for log in observed
+            ],
+            "inferred_summary": [
+                {"action": log.action, "detail": log.detail}
+                for log in inferred
+            ],
         }
     )
 
@@ -332,6 +422,33 @@ def _retryable_http(status_code: int) -> bool:
     return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
 
 
+def _gemini_model_candidates(model: str) -> list[str]:
+    models = [model]
+    for fallback in GEMINI_FALLBACK_MODELS:
+        if fallback not in models:
+            models.append(fallback)
+    return models
+
+
+def _provider_priority(value: str) -> list[str]:
+    parsed = [item.strip().lower() for item in value.split(",") if item.strip()]
+    return parsed or ["gemini-api", "openai", "local-degraded"]
+
+
+def _gemini_attempt_plan(model_candidates: list[str], payloads: list[tuple[str, dict]]) -> list[tuple[str, str, dict]]:
+    by_mode = {mode: payload for mode, payload in payloads}
+    full_payload = by_mode.get("full") or payloads[0][1]
+    lightweight_payload = by_mode.get("lightweight") or full_payload
+    plan: list[tuple[str, str, dict]] = []
+    primary = model_candidates[0]
+    plan.append((primary, "full", full_payload))
+    if "lightweight" in by_mode:
+        plan.append((primary, "lightweight", lightweight_payload))
+    for model in model_candidates[1:]:
+        plan.append((model, "lightweight" if "lightweight" in by_mode else "full", lightweight_payload))
+    return plan
+
+
 def _mark_llm_fallback(
     fallback: LLMJudgement,
     provider: str,
@@ -354,6 +471,21 @@ def _mark_llm_fallback(
             "LLM 분석을 재시도했으나 API 오류 또는 응답 파싱 문제로 실패하여, "
             "정적 분석 근거 기반의 안전 fallback을 적용했습니다."
         )
+
+
+def _degraded_ai_judgement(fallback: LLMJudgement, error: str) -> LLMJudgement:
+    fallback.provider = "local-degraded-ai"
+    fallback.used = True
+    fallback.status = "degraded"
+    fallback.confidence = max(fallback.confidence, 0.35)
+    fallback.error = error
+    fallback.reason = (
+        "외부 LLM quota 또는 provider 오류로 원격 AI 호출은 완료되지 않았습니다. "
+        "대신 정적 evidence, sandbox observed/inferred 로그, 점수 근거를 압축한 degraded AI analysis를 적용했습니다. "
+        f"{fallback.reason}"
+    )
+    fallback.notes.append("degraded AI analysis kept active after provider failure")
+    return fallback
 
 
 def _unique_candidates(values: list[tuple[str, str]]) -> list[tuple[str, str]]:

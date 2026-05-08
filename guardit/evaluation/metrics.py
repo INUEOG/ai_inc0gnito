@@ -31,6 +31,13 @@ def evaluate_dataset(dataset: Path, output: Path = Path("results/evaluation-repo
         github_token=config.github_token,
         llm_provider="off",
         llm_model=config.llm_model,
+        llm_required=config.llm_required,
+        llm_max_retries=config.llm_max_retries,
+        llm_backoff_seconds=config.llm_backoff_seconds,
+        llm_strict_json=config.llm_strict_json,
+        llm_provider_priority=config.llm_provider_priority,
+        llm_lightweight_mode=config.llm_lightweight_mode,
+        llm_enable_cache=config.llm_enable_cache,
     )
 
     rows = []

@@ -108,17 +108,19 @@ class LLMJudgeTest(unittest.TestCase):
         self.assertEqual(result.risk_adjustment, 10)
         self.assertIn("실행 파일", result.reason)
 
-    def test_gemini_api_retries_http_503_three_times(self) -> None:
-        error = urllib.error.HTTPError(
-            url="https://generativelanguage.googleapis.com",
-            code=503,
-            msg="Service Unavailable",
-            hdrs=None,
-            fp=_FakeErrorBody('{"error":"high demand"}'),
-        )
+    def test_gemini_api_429_retries_with_backoff_then_degrades(self) -> None:
+        def rate_limited(*args, **kwargs):
+            raise urllib.error.HTTPError(
+                url="https://generativelanguage.googleapis.com",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=_FakeErrorBody('{"error":"quota exceeded"}'),
+            )
+
         with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False), patch(
-            "guardit.ai.llm_judge.urllib.request.urlopen", side_effect=[error, error, error]
-        ) as urlopen:
+            "guardit.ai.llm_judge.urllib.request.urlopen", side_effect=rate_limited
+        ) as urlopen, patch("guardit.ai.llm_judge.time.sleep") as sleep:
             result = LLMJudge(provider="gemini-api", model="gemini-test", max_retries=3, backoff_seconds=0).judge(
                 suspicious_files=["package.json"],
                 evidence=[_evidence()],
@@ -127,12 +129,97 @@ class LLMJudgeTest(unittest.TestCase):
                 rule_score=22,
             )
 
-        self.assertFalse(result.used)
-        self.assertEqual(result.status, "failed")
+        self.assertTrue(result.used)
+        self.assertEqual(result.status, "degraded")
         self.assertEqual(result.attempts, 3)
         self.assertEqual(urlopen.call_count, 3)
-        self.assertIn("재시도", result.reason)
-        self.assertIn("503", result.error or "")
+        self.assertEqual(sleep.call_count, 0)
+        self.assertIn("degraded AI analysis", result.notes[-1])
+        self.assertIn("429", result.error or "")
+
+    def test_gemini_429_retries_with_lightweight_payload(self) -> None:
+        response_payload = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "verdict": "SAFE",
+                                        "confidence": 0.6,
+                                        "reason": "lightweight evidence 기준으로 외부 전송은 없습니다.",
+                                        "risk_adjustment": 0,
+                                        "evidence": ["lightweight"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        calls = []
+
+        def fake_urlopen(request, **kwargs):
+            calls.append(json.loads(request.data.decode("utf-8")))
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    url=request.full_url,
+                    code=429,
+                    msg="Too Many Requests",
+                    hdrs=None,
+                    fp=_FakeErrorBody('{"error":"quota exceeded"}'),
+                )
+            return _FakeResponse(response_payload)
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False), patch(
+            "guardit.ai.llm_judge.urllib.request.urlopen", side_effect=fake_urlopen
+        ), patch("guardit.ai.llm_judge.time.sleep"):
+            result = LLMJudge(provider="gemini-api", model="gemini-test", max_retries=3, backoff_seconds=0).judge(
+                suspicious_files=["package.json"],
+                evidence=[_evidence()],
+                sandbox_logs=[],
+                metadata=_metadata(),
+                rule_score=22,
+            )
+
+        self.assertTrue(result.used)
+        self.assertEqual(result.status, "lightweight")
+        second_prompt = calls[1]["contents"][0]["parts"][0]["text"]
+        self.assertIn('"payload_mode": "lightweight"', second_prompt)
+
+    def test_gemini_429_falls_back_to_openai_provider(self) -> None:
+        openai_payload = {"choices": [{"message": {"content": json.dumps({"verdict": "SUSPICIOUS", "confidence": 0.7, "reason": "OpenAI fallback 판단", "risk_adjustment": 3, "evidence": ["fallback"]})}}]}
+
+        def fake_urlopen(request, **kwargs):
+            if "generativelanguage.googleapis.com" in request.full_url:
+                raise urllib.error.HTTPError(
+                    url=request.full_url,
+                    code=429,
+                    msg="Too Many Requests",
+                    hdrs=None,
+                    fp=_FakeErrorBody('{"error":"quota exceeded"}'),
+                )
+            return _FakeResponse(openai_payload)
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key", "OPENAI_API_KEY": "openai-key"}, clear=False), patch(
+            "guardit.ai.llm_judge.urllib.request.urlopen", side_effect=fake_urlopen
+        ), patch("guardit.ai.llm_judge.time.sleep"):
+            result = LLMJudge(provider="gemini-api", model="gemini-test", max_retries=3, backoff_seconds=0).judge(
+                suspicious_files=["package.json"],
+                evidence=[_evidence()],
+                sandbox_logs=[],
+                metadata=_metadata(),
+                rule_score=22,
+            )
+
+        self.assertTrue(result.used)
+        self.assertEqual(result.provider, "openai")
+        self.assertEqual(result.verdict, "SUSPICIOUS")
+        self.assertEqual(result.risk_adjustment, 3)
 
     def test_gemini_api_parses_text_wrapped_json_and_normalizes_schema(self) -> None:
         response_payload = {
@@ -185,11 +272,11 @@ class LLMJudgeTest(unittest.TestCase):
                 rule_score=22,
             )
 
-        self.assertFalse(result.used)
-        self.assertEqual(result.provider, "gemini-api")
-        self.assertEqual(result.status, "failed")
+        self.assertTrue(result.used)
+        self.assertEqual(result.provider, "local-degraded-ai")
+        self.assertEqual(result.status, "degraded")
         self.assertIn("GEMINI_API_KEY", result.error or "")
-        self.assertIn("안전 fallback", result.reason)
+        self.assertIn("degraded AI analysis", result.reason)
 
 
 class _FakeErrorBody:

@@ -314,7 +314,7 @@ def _detection_section(report: ScanReport) -> str | None:
             lines.append(f"  {color('·', FG_RED)} {log.file}:{log.line} {log.action}{syscall} — {_short(log.detail, 50)}")
         lines.append("")
 
-    if not observed:
+    if summary.is_real_sandbox and not observed:
         lines.append(f"  {color('[observed]', FG_GREEN)} {color('실제 행위', DIM)}")
         lines.append(f"  {color('✓', FG_GREEN)} suspicious behavior not observed")
         lines.append(f"  {color('✓', FG_GREEN)} credential access not observed")
@@ -335,13 +335,15 @@ def _ai_section(report: ScanReport) -> str:
 
     if not llm.used:
         lines.append(f"  판정     {color(llm.verdict, f'{BOLD}{verdict_style}')}")
-        lines.append(f"  {color('AI 미사용 — 규칙 기반 안전 판정', DIM)}")
+        lines.append(f"  {color('AI provider disabled — local safety analysis', DIM)}")
         if llm.error:
             lines.append(f"  {color(f'참고: {llm.error}', DIM)}")
         lines.append("")
         return "\n".join(lines)
 
     lines.append(f"  판정     {color(llm.verdict, f'{BOLD}{verdict_style}')}")
+    lines.append(f"  상태     {color(llm.status, FG_YELLOW if llm.status == 'degraded' else DIM)}")
+    lines.append(f"  provider {llm.provider}")
     lines.append(f"  신뢰도   {bar(confidence, 100, verdict_style)} {color(f'{confidence}%', verdict_style)}")
 
     if llm.risk_adjustment:
