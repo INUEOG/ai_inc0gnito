@@ -27,6 +27,7 @@ class GuarditConfig:
 
 
 def load_config() -> GuarditConfig:
+    load_env_files()
     return GuarditConfig(
         max_candidate_files=int(os.environ.get("GUARDIT_MAX_CANDIDATE_FILES", "80")),
         max_file_bytes=int(os.environ.get("GUARDIT_MAX_FILE_BYTES", "300000")),
@@ -56,3 +57,52 @@ def _env_bool(name: str, default: bool) -> bool:
 def _sandbox_mode(value: str) -> str:
     normalized = value.strip().lower()
     return "docker" if normalized in {"always", "docker", "static", "off"} else "docker"
+
+
+def load_env_files() -> None:
+    for env_path in _env_file_candidates():
+        if not env_path.exists():
+            continue
+        if not _load_with_python_dotenv(env_path):
+            _load_with_builtin_parser(env_path)
+
+
+def env_file_status() -> dict[str, bool]:
+    project_env, cwd_env = _env_file_candidates()
+    return {
+        "project_env": project_env.exists(),
+        "cwd_env": cwd_env.exists(),
+    }
+
+
+def _env_file_candidates() -> tuple[Path, Path]:
+    return (_project_root() / ".env", Path.cwd() / ".env")
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_with_python_dotenv(env_path: Path) -> bool:
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return False
+    load_dotenv(env_path, override=False)
+    return True
+
+
+def _load_with_builtin_parser(env_path: Path) -> None:
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")

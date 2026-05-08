@@ -1,1 +1,1 @@
-# Guardit MVP는 Python 표준 라이브러리만 사용합니다.
+python-dotenv>=1.0.0

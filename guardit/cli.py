@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from .clone import clean_clone, force_clone_or_copy
-from .config import load_config
+from .config import env_file_status, load_config
 from .evaluation import evaluate_dataset
 from .reporter import render_json, render_saved_report, save_report
 from .scanner import scan_source
@@ -217,6 +217,11 @@ class _ActionReportProxy:
 
 
 def _doctor(config) -> int:
+    env_status = env_file_status()
+    gemini_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    selected_provider = config.llm_provider
+    if selected_provider in {"gemini", "gemini-api", "auto"} and not gemini_key:
+        selected_provider = f"{selected_provider} (API key required)"
     print("")
     print("  guardit 환경 점검")
     print("  " + "─" * 30)
@@ -226,8 +231,11 @@ def _doctor(config) -> int:
     print(_check("GEMINI_API_KEY", bool(os.environ.get('GEMINI_API_KEY'))))
     print(_check("GOOGLE_API_KEY", bool(os.environ.get('GOOGLE_API_KEY'))))
     print(_check("OPENAI_API_KEY", bool(os.environ.get('OPENAI_API_KEY'))))
+    print(_check("project .env", env_status["project_env"]))
+    print(_check("cwd .env", env_status["cwd_env"]))
     print("")
     print(f"  LLM provider:   {config.llm_provider}")
+    print(f"  Provider used:  {selected_provider}")
     print(f"  LLM model:      {config.llm_model}")
     print(f"  LLM required:   {config.llm_required}")
     print(f"  LLM priority:   {config.llm_provider_priority}")

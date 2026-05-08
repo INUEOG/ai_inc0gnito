@@ -62,7 +62,7 @@ class LLMJudge:
                 attempts=0,
                 max_attempts=self.max_retries,
                 notes=["Gemini API key missing"],
-                error="GEMINI_API_KEY 또는 GOOGLE_API_KEY가 없어 LLM 호출을 수행하지 못했습니다.",
+                error=_missing_gemini_key_message(),
             )
             return self._provider_fallback(suspicious_files, evidence, sandbox_logs, metadata, rule_score, fallback)
         if self.provider == "openai":
@@ -89,7 +89,7 @@ class LLMJudge:
                 attempts=0,
                 max_attempts=self.max_retries,
                 notes=["Gemini API key missing"],
-                error="GEMINI_API_KEY 또는 GOOGLE_API_KEY가 없어 LLM 호출을 수행하지 못했습니다.",
+                error=_missing_gemini_key_message(),
             )
             return fallback
 
@@ -257,7 +257,17 @@ class LLMJudge:
 
 
 def _gemini_api_key() -> str | None:
+    try:
+        from guardit.config import load_env_files
+
+        load_env_files()
+    except Exception:
+        pass
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
+def _missing_gemini_key_message() -> str:
+    return "GEMINI_API_KEY 또는 GOOGLE_API_KEY가 없습니다. .env 또는 환경변수에 API 키를 설정하세요."
 
 
 def _build_evidence_payload(
