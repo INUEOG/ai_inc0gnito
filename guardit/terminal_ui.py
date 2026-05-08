@@ -230,9 +230,12 @@ def _sandbox_panel(report: ScanReport) -> str:
 def _ai_panel(report: ScanReport) -> str:
     confidence = int(round(report.llm.confidence * 100))
     verdict_color = level_color(report.llm.verdict)
+    attempts = f"{report.llm.attempts}/{report.llm.max_attempts}" if report.llm.max_attempts else "0/0"
     lines = [
         f"Provider          {badge(report.llm.provider, FG_CYAN)}",
-        f"Usage             {badge('used' if report.llm.used else 'fallback', FG_GREEN if report.llm.used else FG_YELLOW)}",
+        f"Status            {badge(report.llm.status, FG_GREEN if report.llm.used else FG_YELLOW)}",
+        f"Attempts          {attempts}",
+        f"Fallback          {'-' if report.llm.used else 'rule-based safety decision'}",
         f"AI Verdict        {badge(report.llm.verdict, verdict_color)}",
         f"Confidence        {bar(confidence, 100, verdict_color)} {color(str(confidence) + '%', verdict_color)}",
         f"Risk adjustment   {color(f'{report.llm.risk_adjustment:+d}', FG_YELLOW if report.llm.risk_adjustment else FG_BRIGHT_BLACK)}",
@@ -243,6 +246,14 @@ def _ai_panel(report: ScanReport) -> str:
     if report.llm.error:
         lines.append("")
         lines.append(color(f"LLM note: {report.llm.error}", FG_YELLOW))
+    if report.llm.notes:
+        lines.append("")
+        lines.append(color("Attempt notes", BOLD))
+        lines.extend(f"- {note}" for note in report.llm.notes[-5:])
+    if report.llm.leaked_data:
+        lines.append("")
+        lines.append(color("Leaked data candidates", BOLD))
+        lines.append(" ".join(secret_badge(item) for item in report.llm.leaked_data))
     return panel("AI Security Analysis", lines, border=verdict_color)
 
 
@@ -384,6 +395,8 @@ def secret_badge(value: str) -> str:
 
 
 def _recommended_action(report: ScanReport) -> str:
+    if report.score.risk_level == "UNKNOWN":
+        return color("Hold: LLM 분석 실패로 최종 판정을 보류했습니다.", FG_CYAN)
     if report.score.risk_level == "MALICIOUS":
         return color("Block Clone recommended: 자동 실행 + 개인정보 탈취 흐름 차단", FG_BRIGHT_RED)
     if report.score.risk_level in {"WATCH", "SUSPICIOUS"}:

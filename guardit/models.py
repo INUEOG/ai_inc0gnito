@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
-RiskLevel = Literal["SAFE", "WATCH", "SUSPICIOUS", "MALICIOUS"]
+RiskLevel = Literal["SAFE", "WATCH", "SUSPICIOUS", "MALICIOUS", "UNKNOWN"]
 Severity = Literal["low", "medium", "high", "critical"]
 
 
@@ -126,8 +126,13 @@ class LLMJudgement:
     reason: str
     risk_adjustment: int = 0
     evidence: list[str] = field(default_factory=list)
+    leaked_data: list[str] = field(default_factory=list)
     provider: str = "offline-fallback"
     used: bool = False
+    status: str = "fallback"
+    attempts: int = 0
+    max_attempts: int = 0
+    notes: list[str] = field(default_factory=list)
     error: str | None = None
 
 

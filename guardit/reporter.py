@@ -86,10 +86,14 @@ def render_saved_report(path: Path) -> str:
             [
                 "",
                 f"- provider: {llm.get('provider')}",
-                f"- 사용 여부: {'사용' if llm.get('used') else 'fallback'}",
+                f"- status: {llm.get('status')}",
+                f"- attempts: {llm.get('attempts', 0)}/{llm.get('max_attempts', 0)}",
+                f"- fallback: {'-' if llm.get('used') else 'rule-based safety decision'}",
                 f"- AI 판단: {llm.get('verdict')}",
+                f"- confidence: {float(llm.get('confidence') or 0.0):.2f}",
                 f"- risk_adjustment: {int(llm.get('risk_adjustment') or 0):+d}",
                 f"- 이유: {llm.get('reason')}",
+                f"- fallback/error: {llm.get('error') or '-'}",
             ],
                 border=level_color(str(llm.get("verdict", level))),
             )
@@ -181,14 +185,20 @@ def render_text(report: ScanReport) -> str:
             "",
             "AI 보조 판단:",
             f"- provider: {report.llm.provider}",
-            f"- 사용 여부: {'사용' if report.llm.used else 'fallback'}",
+            f"- status: {report.llm.status}",
+            f"- attempts: {report.llm.attempts}/{report.llm.max_attempts}",
+            f"- fallback: {'-' if report.llm.used else 'rule-based safety decision'}",
             f"- AI 판단: {report.llm.verdict}",
+            f"- confidence: {report.llm.confidence:.2f}",
             f"- risk_adjustment: {report.llm.risk_adjustment:+d}",
             f"- 이유: {report.llm.reason}",
         ]
     )
     if report.llm.error:
         lines.append(f"- 참고: {report.llm.error}")
+    if report.llm.notes:
+        lines.append("- LLM 시도 기록:")
+        lines.extend(f"  - {note}" for note in report.llm.notes[-5:])
 
     lines.extend(["", "점수 근거:"])
     lines.extend(f"- {note}" for note in report.score.notes)

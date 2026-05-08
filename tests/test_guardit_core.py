@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from guardit.config import load_config
 from guardit.file_filter import is_candidate_path
@@ -22,6 +23,15 @@ class GuarditCoreTest(unittest.TestCase):
         self.assertEqual(report.score.risk_level, "MALICIOUS")
         self.assertTrue(report.score.forced_malicious)
         self.assertTrue(any(item.type == "source_to_sink" for item in report.evidence))
+
+    def test_llm_required_holds_final_verdict_when_llm_fails(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            config = load_config()
+            config = config.__class__(llm_provider="gemini-api", llm_required=True, llm_backoff_seconds=0)
+            report = scan_source(str(Path("demo_repos/benign")), config)
+        self.assertEqual(report.score.risk_level, "UNKNOWN")
+        self.assertFalse(report.llm.used)
+        self.assertEqual(report.llm.status, "failed")
 
 
 if __name__ == "__main__":

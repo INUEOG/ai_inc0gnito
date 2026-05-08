@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from guardit.ai.llm_judge import LLMJudge
@@ -64,6 +65,8 @@ class LLMJudgeTest(unittest.TestCase):
         self.assertEqual(result.risk_adjustment, 7)
         self.assertIn("자동 실행", result.reason)
         self.assertIn("gemini-test:generateContent", urlopen.call_args.args[0].full_url)
+        self.assertEqual(result.status, "used")
+        self.assertEqual(result.attempts, 1)
 
     def test_gemini_api_parses_markdown_fenced_json_response(self) -> None:
         response_payload = {
@@ -105,6 +108,73 @@ class LLMJudgeTest(unittest.TestCase):
         self.assertEqual(result.risk_adjustment, 10)
         self.assertIn("실행 파일", result.reason)
 
+    def test_gemini_api_retries_http_503_three_times(self) -> None:
+        error = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=None,
+            fp=_FakeErrorBody('{"error":"high demand"}'),
+        )
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False), patch(
+            "guardit.ai.llm_judge.urllib.request.urlopen", side_effect=[error, error, error]
+        ) as urlopen:
+            result = LLMJudge(provider="gemini-api", model="gemini-test", max_retries=3, backoff_seconds=0).judge(
+                suspicious_files=["package.json"],
+                evidence=[_evidence()],
+                sandbox_logs=[],
+                metadata=_metadata(),
+                rule_score=22,
+            )
+
+        self.assertFalse(result.used)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.attempts, 3)
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertIn("재시도", result.reason)
+        self.assertIn("503", result.error or "")
+
+    def test_gemini_api_parses_text_wrapped_json_and_normalizes_schema(self) -> None:
+        response_payload = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    "여기 분석 결과입니다: "
+                                    "{'verdict':'malicious','confidence':'90',"
+                                    "'reason':['자동 실행 파일 존재','외부 전송 가능'],"
+                                    "'risk_adjustment': 4,"
+                                    "'evidence':['postinstall'],"
+                                    "'leaked_data':['AWS credentials'],}"
+                                    " 추가 설명입니다."
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False), patch(
+            "guardit.ai.llm_judge.urllib.request.urlopen", return_value=_FakeResponse(response_payload)
+        ):
+            result = LLMJudge(provider="gemini-api", model="gemini-test", backoff_seconds=0).judge(
+                suspicious_files=["package.json"],
+                evidence=[_evidence()],
+                sandbox_logs=[],
+                metadata=_metadata(),
+                rule_score=22,
+            )
+
+        self.assertTrue(result.used)
+        self.assertEqual(result.verdict, "MALICIOUS")
+        self.assertEqual(result.confidence, 0.9)
+        self.assertIn("자동 실행", result.reason)
+        self.assertEqual(result.leaked_data, ["AWS credentials"])
+        self.assertTrue(any("confidence normalized" in note for note in result.notes))
+
     def test_gemini_api_without_key_falls_back(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             result = LLMJudge(provider="gemini-api", model="gemini-test").judge(
@@ -116,8 +186,18 @@ class LLMJudgeTest(unittest.TestCase):
             )
 
         self.assertFalse(result.used)
-        self.assertEqual(result.provider, "offline-fallback")
+        self.assertEqual(result.provider, "gemini-api")
+        self.assertEqual(result.status, "failed")
         self.assertIn("GEMINI_API_KEY", result.error or "")
+        self.assertIn("안전 fallback", result.reason)
+
+
+class _FakeErrorBody:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def read(self) -> bytes:
+        return self.text.encode("utf-8")
 
 
 def _metadata() -> RepoMetadata:

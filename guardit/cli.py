@@ -13,7 +13,7 @@ from .scanner import scan_source
 from .terminal_ui import SecurityConsole, render_security_report
 
 
-RISKY_LEVELS = {"WATCH", "SUSPICIOUS", "MALICIOUS"}
+RISKY_LEVELS = {"WATCH", "SUSPICIOUS", "MALICIOUS", "UNKNOWN"}
 LLM_PROVIDERS = ["off", "auto", "gemini-api", "gemini", "openai"]
 
 
@@ -101,6 +101,8 @@ def _run_clone_scan(source: str, config) -> object:
 
 def _resolve_action(level: str, choice: str, score: int = 0, threshold: int = 70) -> str:
     if choice == "auto":
+        if level == "UNKNOWN":
+            return "block"
         if score >= threshold or level == "MALICIOUS":
             return "block"
         if level in RISKY_LEVELS:
@@ -188,6 +190,10 @@ def _config_from_args(args):
         github_token=config.github_token,
         llm_provider=provider,
         llm_model=model,
+        llm_required=config.llm_required,
+        llm_max_retries=config.llm_max_retries,
+        llm_backoff_seconds=config.llm_backoff_seconds,
+        llm_strict_json=config.llm_strict_json,
     )
 
 
@@ -215,6 +221,10 @@ def _doctor(config) -> int:
     print(f"OPENAI_API_KEY 설정: {'예' if os.environ.get('OPENAI_API_KEY') else '아니오'}")
     print(f"LLM provider: {config.llm_provider}")
     print(f"LLM model: {config.llm_model}")
+    print(f"LLM required: {config.llm_required}")
+    print(f"LLM max retries: {config.llm_max_retries}")
+    print(f"LLM backoff seconds: {config.llm_backoff_seconds}")
+    print(f"LLM strict JSON: {config.llm_strict_json}")
     print(f"Sandbox mode: {config.sandbox_mode}")
     print(f"Sandbox image: {config.sandbox_image}")
     print(f"Sandbox timeout: {config.sandbox_timeout_sec}s")

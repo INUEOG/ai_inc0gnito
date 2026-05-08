@@ -62,7 +62,13 @@ def scan_source(source: str, config: GuarditConfig, progress: ProgressCallback |
     _progress(progress, "start", 5, "AI 보조 판단")
     base_after_sandbox = score_report(metadata, evidence, sandbox_logs, None)
     warnings = _build_warnings(evidence)
-    llm = LLMJudge(provider=config.llm_provider, model=config.llm_model).judge(
+    llm = LLMJudge(
+        provider=config.llm_provider,
+        model=config.llm_model,
+        max_retries=config.llm_max_retries,
+        backoff_seconds=config.llm_backoff_seconds,
+        strict_json=config.llm_strict_json,
+    ).judge(
         suspicious_files=[candidate.path for candidate in candidates],
         evidence=evidence,
         sandbox_logs=sandbox_logs,
@@ -71,6 +77,9 @@ def scan_source(source: str, config: GuarditConfig, progress: ProgressCallback |
     )
     _progress(progress, "done", 5, "AI 보조 판단")
     score = score_report(metadata, evidence, sandbox_logs, llm)
+    if config.llm_required and not llm.used:
+        score.risk_level = "UNKNOWN"
+        score.notes.append("LLM required: 최종 LLM 분석 실패로 판정을 보류")
     elapsed_ms = (time.perf_counter() - started) * 1000
     return ScanReport(
         metadata=metadata,
