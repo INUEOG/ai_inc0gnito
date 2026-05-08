@@ -3,14 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 from .clone import clean_clone, force_clone_or_copy
 from .config import load_config
 from .evaluation import evaluate_dataset
-from .reporter import render_json, render_saved_report, render_text, save_report
+from .reporter import render_json, render_saved_report, save_report
 from .scanner import scan_source
+from .terminal_ui import SecurityConsole, render_security_report
 
 
 RISKY_LEVELS = {"WATCH", "SUSPICIOUS", "MALICIOUS"}
@@ -60,13 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "scan":
         report = _run_scan(args.source, config, quiet=args.json)
         save_report(report, Path(args.output))
-        print(render_json(report) if args.json else render_text(report))
+        print(render_json(report) if args.json else render_security_report(report, args.output))
         return 1 if report.score.final_score >= args.threshold else 0
 
     if args.command == "clone":
         report = _run_clone_scan(args.repo_url, config)
         save_report(report, Path(args.output))
-        print(render_text(report))
+        print(render_security_report(report, args.output))
         choice = _clone_choice_from_flags(args)
         action = _resolve_action(report.score.risk_level, choice, report.score.final_score, args.threshold)
         return _perform_action(args.repo_url, args.destination, action, report, config.github_token)
@@ -89,22 +89,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_scan(source: str, config, quiet: bool = False) -> object:
-    _progress("[1/5] GitHub/로컬 레포 정보 수집 시작", quiet)
-    report = scan_source(source, config)
-    _progress("[2/5] 자동 실행 후보 파일 탐지 완료", quiet)
-    _progress("[3/5] 정적 분석 완료", quiet)
-    _progress(f"[4/5] sandbox mode={config.sandbox_mode} 분석 완료", quiet)
-    _progress("[5/5] AI 의도 분석 완료", quiet)
-    return report
+    console = SecurityConsole()
+    if not quiet:
+        console.banner(source, config.sandbox_mode)
+    return scan_source(source, config, progress=console.progress_callback(quiet=quiet))
 
 
 def _run_clone_scan(source: str, config) -> object:
-    print(f"guardit clone {source}")
     return _run_scan(source, config)
-
-
-def _progress(message: str, quiet: bool) -> None:
-    print(message, file=sys.stderr if quiet else sys.stdout)
 
 
 def _resolve_action(level: str, choice: str, score: int = 0, threshold: int = 70) -> str:
@@ -118,41 +110,52 @@ def _resolve_action(level: str, choice: str, score: int = 0, threshold: int = 70
         return choice
     if level not in RISKY_LEVELS:
         return "force"
-    print("")
-    print("선택:")
-    print("1. clone 차단")
-    print("2. 위험 파일 제외 후 clean clone")
-    print("3. 위험 감수 후 진행")
+    SecurityConsole().action_menu(_ActionReportProxy(level, score))
     while True:
         selected = input("> ").strip()
         if selected == "1":
+            print("선택: Block Clone")
             return "block"
         if selected == "2":
+            print("선택: Clone Without Risky Files")
             return "clean"
         if selected == "3":
+            print("선택: Continue Anyway")
             return "force"
         print("1, 2, 3 중 하나를 입력하세요.")
 
 
 def _perform_action(source: str, destination: str | None, action: str, report, token: str | None) -> int:
     target = Path(destination or _default_destination(source)).resolve()
+    console = SecurityConsole()
     if action == "block":
-        print("")
-        print("결과: clone을 차단했습니다.")
+        console.action_result(
+            "Clone Gate: Blocked",
+            [
+                "clone 전 단계에서 작업을 중단했습니다.",
+                "위험 후보 파일과 evidence는 JSON 리포트에서 재검토할 수 있습니다.",
+            ],
+            report.score.risk_level,
+        )
         return 1
     try:
         if action == "clean":
             clean_clone(source, target, report, token=token)
-            print("")
-            print("결과: 위험 파일 제외 후 clean clone을 완료했습니다.")
+            console.action_result(
+                "Clone Gate: Clean Clone Complete",
+                ["위험 후보 파일을 제외한 clone을 완료했습니다.", f"위치: {target}"],
+                "WATCH",
+            )
         else:
             force_clone_or_copy(source, target)
-            print("")
-            print("결과: 위험을 감수하고 clone/copy를 완료했습니다.")
+            console.action_result(
+                "Clone Gate: Continued With Risk",
+                ["사용자 선택에 따라 원본 clone/copy를 진행했습니다.", f"위치: {target}"],
+                report.score.risk_level,
+            )
     except Exception as exc:
-        print(f"결과: 실패 - {exc}")
+        console.action_result("Clone Gate: Failed", [str(exc)], "MALICIOUS")
         return 1
-    print(f"위치: {target}")
     return 0
 
 
@@ -194,6 +197,13 @@ def _clone_choice_from_flags(args) -> str:
     if args.allow_risk:
         return "force"
     return args.choice
+
+
+class _ActionReportProxy:
+    def __init__(self, level: str, score: int) -> None:
+        self.score = self
+        self.risk_level = level
+        self.final_score = score
 
 
 def _doctor(config) -> int:

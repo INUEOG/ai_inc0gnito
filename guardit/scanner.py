@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 from .ai import LLMJudge
@@ -15,19 +16,29 @@ from .scoring import score_report
 from .static_analyzer import analyze_candidate
 
 
-def scan_source(source: str, config: GuarditConfig) -> ScanReport:
+ProgressCallback = Callable[[str, int, str], None]
+
+
+def scan_source(source: str, config: GuarditConfig, progress: ProgressCallback | None = None) -> ScanReport:
     started = time.perf_counter()
+    _progress(progress, "start", 1, "GitHub/로컬 정보 수집")
     if _is_github_url(source):
         metadata, candidates = _collect_github(source, config)
     else:
         metadata, candidates = _collect_local(Path(source), config)
+    _progress(progress, "done", 1, "GitHub/로컬 정보 수집")
+    _progress(progress, "start", 2, "자동 실행 파일 탐지")
+    _progress(progress, "done", 2, "자동 실행 파일 탐지")
 
+    _progress(progress, "start", 3, "정적 개인정보 유출 분석")
     evidence = []
     for candidate in candidates:
         evidence.extend(analyze_candidate(candidate))
 
     execution_flows = build_execution_flows(candidates, evidence)
     provisional = score_report(metadata, evidence, [], None)
+    _progress(progress, "done", 3, "정적 개인정보 유출 분석")
+    _progress(progress, "start", 4, "샌드박스 행동 분석")
     sandbox_logs = []
     if config.sandbox_mode == "off":
         sandbox_summary = StaticBehaviorAnalyzer().summarize([])
@@ -40,13 +51,15 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
     elif config.sandbox_mode == "docker":
         sandbox_summary = StaticBehaviorAnalyzer().summarize([])
         sandbox_summary.mode = "docker-sandbox-skipped"
-        sandbox_summary.fallback_reason = f"점수 {provisional.final_score}가 sandbox threshold {config.sandbox_threshold} 미만입니다."
+        sandbox_summary.fallback_reason = f"LLM 보정 전 점수 {provisional.final_score}가 sandbox threshold {config.sandbox_threshold} 미만입니다."
     else:
         sandbox_runner = StaticBehaviorAnalyzer()
         if provisional.final_score >= config.sandbox_threshold:
             sandbox_logs = sandbox_runner.analyze(candidates, evidence)
         sandbox_summary = sandbox_runner.summarize(sandbox_logs)
+    _progress(progress, "done", 4, "샌드박스 행동 분석")
 
+    _progress(progress, "start", 5, "AI 보조 판단")
     base_after_sandbox = score_report(metadata, evidence, sandbox_logs, None)
     warnings = _build_warnings(evidence)
     llm = LLMJudge(provider=config.llm_provider, model=config.llm_model).judge(
@@ -56,6 +69,7 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
         metadata=metadata,
         rule_score=base_after_sandbox.base_score,
     )
+    _progress(progress, "done", 5, "AI 보조 판단")
     score = score_report(metadata, evidence, sandbox_logs, llm)
     elapsed_ms = (time.perf_counter() - started) * 1000
     return ScanReport(
@@ -71,6 +85,11 @@ def scan_source(source: str, config: GuarditConfig) -> ScanReport:
         elapsed_ms=elapsed_ms,
         suspected_secrets=_suspected_secrets(evidence),
     )
+
+
+def _progress(progress: ProgressCallback | None, event: str, index: int, title: str) -> None:
+    if progress:
+        progress(event, index, title)
 
 
 def _build_warnings(evidence: list[Evidence]) -> list[ScanWarning]:

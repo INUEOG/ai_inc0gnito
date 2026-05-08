@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .ai.redact import redact_obj
 from .models import ScanReport
+from .terminal_ui import badge, bar, level_color, panel, secret_badge
 
 
 def save_report(report: ScanReport, path: Path = Path("results/guardit-report.json")) -> None:
@@ -20,55 +21,88 @@ def render_saved_report(path: Path) -> str:
     payload = json.loads(path.read_text(encoding="utf-8"))
     score = payload.get("score", {})
     metadata = payload.get("metadata", {})
-    lines = [
-        f"[{score.get('risk_level', 'UNKNOWN')}]",
-        f"위험도: {score.get('final_score', '?')}/100",
+    level = str(score.get("risk_level", "UNKNOWN"))
+    final_score = int(score.get("final_score") or 0)
+    summary = [
+        f"Final Risk        {badge(level, level_color(level))}",
+        f"Risk Score        {bar(final_score, 100, level_color(level))} {final_score}/100",
+        f"- LLM 보정 전 점수: {score.get('base_score', '?')}/100",
         f"대상: {metadata.get('source', '-')}",
-        "",
-        "위험 후보 파일:",
     ]
+    sections = [panel("Final Risk Report", summary, border=level_color(level))]
+
+    candidates = []
     for candidate in payload.get("candidates", [])[:20]:
         if isinstance(candidate, dict):
-            lines.append(f"- {candidate.get('path')} ({candidate.get('reason', '')})")
+            candidates.append(f"- {candidate.get('path')} ({candidate.get('reason', '')})")
         else:
-            lines.append(f"- {candidate}")
-    lines.append("")
-    lines.append("위험 흐름:")
+            candidates.append(f"- {candidate}")
+    sections.append(panel("Suspicious Files", candidates or ["위험 후보 파일 없음"], border=level_color(level)))
+
+    flows = []
     for flow in payload.get("execution_flows", [])[:10]:
-        lines.append(f"- {flow.get('trigger_file')}")
+        flows.append(f"- {flow.get('trigger_file')}")
         if flow.get("executed_file"):
-            lines.append(f"  -> {flow.get('executed_file')}")
+            flows.append(f"  -> {flow.get('executed_file')}")
         for source in flow.get("secret_sources", [])[:3]:
-            lines.append(f"  -> 민감정보 접근: {source}")
+            flows.append(f"  -> 민감정보 접근: {source}")
         for sink in flow.get("external_sinks", [])[:3]:
-            lines.append(f"  -> 외부 전송: {sink}")
-        lines.append(f"  risk: {flow.get('risk')}")
-    lines.append("")
+            flows.append(f"  -> 외부 전송: {sink}")
+        flows.append(f"  risk: {flow.get('risk')}")
+    if flows:
+        sections.append(panel("Execution Flow", flows, border=level_color(level)))
+
     warnings = payload.get("warnings", [])
     if warnings:
-        lines.append("주의:")
+        warning_lines = []
         for warning in warnings[:10]:
-            lines.append(f"- {warning.get('file')}:{warning.get('line')} {warning.get('message')}")
-        lines.append("")
+            warning_lines.append(f"- {warning.get('file')}:{warning.get('line')} {warning.get('message')}")
+        sections.append(panel("Warnings", warning_lines, border=level_color(level)))
+
     sandbox = payload.get("sandbox_summary", {})
     if sandbox:
-        lines.append("Sandbox Mode:")
-        lines.append(f"- mode: {sandbox.get('mode')}")
-        lines.append(f"- real sandbox: {sandbox.get('is_real_sandbox')}")
-        lines.append(f"- fallback: {sandbox.get('fallback_used')}")
+        sandbox_lines = [
+            f"- mode: {sandbox.get('mode')}",
+            f"- real sandbox: {sandbox.get('is_real_sandbox')}",
+            f"- fallback: {sandbox.get('fallback_used')}",
+        ]
         if sandbox.get("fallback_reason"):
-            lines.append(f"- fallback reason: {sandbox.get('fallback_reason')}")
-        lines.append("")
-    lines.append("주요 evidence:")
+            sandbox_lines.append(f"- fallback reason: {sandbox.get('fallback_reason')}")
+        sections.append(panel("Sandbox Behavior", sandbox_lines, border=level_color(level)))
+
+    evidence_lines = []
     for item in payload.get("evidence", [])[:15]:
-        lines.append(f"- {item.get('file')}:{item.get('line')} [{item.get('type')}] {item.get('description')}")
-    return "\n".join(lines)
+        evidence_lines.append(f"- {item.get('file')}:{item.get('line')} [{item.get('type')}] {item.get('description')}")
+    if payload.get("suspected_secrets"):
+        evidence_lines.append("")
+        evidence_lines.append(" ".join(secret_badge(item) for item in payload.get("suspected_secrets", [])))
+    sections.append(panel("Evidence", evidence_lines or ["위험 evidence 없음"], border=level_color(level)))
+
+    llm = payload.get("llm", {})
+    if llm:
+        sections.append(
+            panel(
+                "AI Security Analysis",
+            [
+                "",
+                f"- provider: {llm.get('provider')}",
+                f"- 사용 여부: {'사용' if llm.get('used') else 'fallback'}",
+                f"- AI 판단: {llm.get('verdict')}",
+                f"- risk_adjustment: {int(llm.get('risk_adjustment') or 0):+d}",
+                f"- 이유: {llm.get('reason')}",
+            ],
+                border=level_color(str(llm.get("verdict", level))),
+            )
+        )
+    return "\n\n".join(sections)
 
 
 def render_text(report: ScanReport) -> str:
     lines = [
-        f"[{report.score.risk_level}]",
-        f"위험도: {report.score.final_score}/100",
+        "최종 판정:",
+        f"- 등급: {report.score.risk_level}",
+        f"- 위험도: {report.score.final_score}/100",
+        f"- LLM 보정 전 점수: {report.score.base_score}/100",
         "",
         f"대상: {report.metadata.source}",
         f"수집 방식: {report.metadata.collection_mode}",
@@ -145,10 +179,11 @@ def render_text(report: ScanReport) -> str:
     lines.extend(
         [
             "",
-            "AI 의도 분석:",
+            "AI 보조 판단:",
             f"- provider: {report.llm.provider}",
             f"- 사용 여부: {'사용' if report.llm.used else 'fallback'}",
-            f"- 판단: {report.llm.verdict}",
+            f"- AI 판단: {report.llm.verdict}",
+            f"- risk_adjustment: {report.llm.risk_adjustment:+d}",
             f"- 이유: {report.llm.reason}",
         ]
     )

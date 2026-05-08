@@ -31,6 +31,7 @@ NETWORK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 DANGEROUS_EXEC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("remote_script_execution", re.compile(r"\b(curl|wget)\b.+\|\s*(sh|bash|python|node)", re.I)),
+    ("binary_execution", re.compile(r"(^|[\s;&|])[\w./\\-]+\.exe(\s|$)", re.I)),
     ("node_eval", re.compile(r"\bnode\s+-e\b", re.I)),
     ("bash_command", re.compile(r"\bbash\s+-c\b", re.I)),
     ("script_command_execution", re.compile(r"\b(node|python|python3|bash|sh|pwsh|powershell)\s+[\w./-]+\.(js|mjs|cjs|py|sh|ps1)\b", re.I)),
@@ -131,11 +132,17 @@ def _scan_virtual_line(path: str, line_no: int, line: str) -> list[Evidence]:
     for evidence_type, pattern in DANGEROUS_EXEC_PATTERNS:
         if pattern.search(line):
             score = 20 if evidence_type == "remote_script_execution" else 10
-            if evidence_type in {"remote_script_execution", "script_command_execution"}:
-                category = "remote_execution" if evidence_type == "remote_script_execution" else "process_execution"
+            if evidence_type in {"remote_script_execution", "script_command_execution", "binary_execution"}:
+                if evidence_type == "remote_script_execution":
+                    category = "remote_execution"
+                elif evidence_type == "binary_execution":
+                    category = "binary_execution"
+                else:
+                    category = "process_execution"
             else:
                 category = "obfuscation"
-            result.append(_ev(path, line_no, evidence_type, "high", stripped[:220], score, category, "동적 실행, 난독화, 원격 스크립트 실행 패턴입니다."))
+            description = "실행 가능한 바이너리(.exe)를 호출합니다." if evidence_type == "binary_execution" else "동적 실행, 난독화, 원격 스크립트 실행 패턴입니다."
+            result.append(_ev(path, line_no, evidence_type, "high", stripped[:220], score, category, description))
     return result
 
 

@@ -108,7 +108,7 @@ def _flow(trigger: str, executed: str | None, evidence: list[Evidence], process_
     related = [item for item in evidence if item.file in relevant_files]
     secrets = _unique([item.evidence for item in related if item.category == "secret_access"])[:5]
     sinks = _unique([item.evidence for item in related if item.category == "external_sink"])[:5]
-    processes = _unique([*process_steps, *[item.evidence for item in related if item.category in {"remote_execution", "process_execution", "obfuscation"}]])[:5]
+    processes = _unique([*process_steps, *[item.evidence for item in related if item.category in {"remote_execution", "process_execution", "binary_execution", "obfuscation"}]])[:5]
     if secrets and sinks:
         risk = "credential_exfiltration_flow"
     elif sinks or processes:

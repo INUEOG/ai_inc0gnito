@@ -65,6 +65,46 @@ class LLMJudgeTest(unittest.TestCase):
         self.assertIn("자동 실행", result.reason)
         self.assertIn("gemini-test:generateContent", urlopen.call_args.args[0].full_url)
 
+    def test_gemini_api_parses_markdown_fenced_json_response(self) -> None:
+        response_payload = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    "분석 결과입니다.\n"
+                                    "```json\n"
+                                    '{"verdict":"MALICIOUS","confidence":0.91,'
+                                    '"reason":"postinstall에서 실행 파일을 호출합니다.",'
+                                    '"risk_adjustment":10,"evidence":["loader.exe"]}'
+                                    "\n```\n"
+                                    "위 JSON을 참고하세요."
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False), patch(
+            "guardit.ai.llm_judge.urllib.request.urlopen", return_value=_FakeResponse(response_payload)
+        ):
+            result = LLMJudge(provider="gemini-api", model="gemini-test").judge(
+                suspicious_files=["package.json"],
+                evidence=[_evidence()],
+                sandbox_logs=[],
+                metadata=_metadata(),
+                rule_score=22,
+            )
+
+        self.assertTrue(result.used)
+        self.assertEqual(result.provider, "gemini-api")
+        self.assertEqual(result.verdict, "MALICIOUS")
+        self.assertEqual(result.risk_adjustment, 10)
+        self.assertIn("실행 파일", result.reason)
+
     def test_gemini_api_without_key_falls_back(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             result = LLMJudge(provider="gemini-api", model="gemini-test").judge(

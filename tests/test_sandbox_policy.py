@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from guardit.config import load_config
 from guardit.models import CandidateFile, ExecutionFlow
+from guardit.reporter import render_text
 from guardit.sandbox.docker_runner import DockerSandboxRunner
 from guardit.sandbox.strace_parser import parse_strace
 from guardit.scanner import scan_source
@@ -47,6 +48,23 @@ class SandboxPolicyTest(unittest.TestCase):
         )
         self.assertEqual(report.score.risk_level, "WATCH")
         self.assertTrue(report.warnings)
+
+    def test_postinstall_exe_adds_binary_execution_evidence_and_score_note(self) -> None:
+        report = _scan_fixture(
+            {
+                "package.json": json.dumps({"scripts": {"postinstall": "loader.exe"}}),
+            },
+            sandbox_mode="docker",
+        )
+        rendered = render_text(report)
+        self.assertTrue(any(item.type == "binary_execution" for item in report.evidence))
+        self.assertTrue(any(note.startswith("binary_execution: +") for note in report.score.notes))
+        self.assertTrue(any(note == "LLM risk_adjustment: +0" for note in report.score.notes))
+        self.assertEqual(report.sandbox_summary.mode, "docker-sandbox-skipped")
+        self.assertIn("LLM 보정 전 점수", report.sandbox_summary.fallback_reason or "")
+        self.assertIn("최종 판정:", rendered)
+        self.assertIn("AI 보조 판단:", rendered)
+        self.assertIn("- AI 판단:", rendered)
 
     def test_auto_run_with_credential_access_is_suspicious(self) -> None:
         report = _scan_fixture(

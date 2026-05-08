@@ -21,7 +21,7 @@ def score_report(
     has_secret_access = any(item.category == "secret_access" for item in evidence)
     has_external_sink = any(item.category == "external_sink" for item in evidence)
     has_flow = any(item.category == "data_flow" for item in evidence)
-    has_command_execution = any(item.category in {"remote_execution", "process_execution", "obfuscation"} for item in evidence)
+    has_command_execution = any(item.category in {"remote_execution", "process_execution", "binary_execution", "obfuscation"} for item in evidence)
 
     score = 0
     notes: list[str] = []
@@ -33,6 +33,7 @@ def score_report(
         "obfuscation": 20,
         "remote_execution": 20,
         "process_execution": 20,
+        "binary_execution": 20,
     }.items():
         category_score = min(cap, sum(item.score for item in evidence if item.category == category))
         if category_score:
@@ -85,6 +86,8 @@ def score_report(
 
     base_score = max(0, min(100, score))
     adjustment = _bounded_adjustment(llm.risk_adjustment if llm else 0)
+    if llm:
+        notes.append(f"LLM risk_adjustment: {adjustment:+d}")
     final_score = max(0, min(100, base_score + adjustment))
     if forced:
         final_score = max(final_score, 70)

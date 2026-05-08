@@ -2,12 +2,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 from guardit.ai.redact import redact_obj, redact_sensitive_text
 from guardit.models import Evidence, LLMJudgement, RepoMetadata, SandboxLog
+
+
+GEMINI_SYSTEM_PROMPT = (
+    "JSON만 반환하세요. markdown 금지. 설명 금지. "
+    "Return only a valid JSON object. Do not wrap it in markdown code fences. "
+    "Do not include prose before or after JSON."
+)
+CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.I | re.S)
+JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
+RAW_RESPONSE_LOG = Path("logs") / "llm_raw_response.txt"
 
 
 @dataclass
@@ -51,6 +63,7 @@ class LLMJudge:
 
         payload = _build_evidence_payload(suspicious_files, evidence, sandbox_logs, metadata, rule_score)
         body = {
+            "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_PROMPT}]},
             "contents": [{"role": "user", "parts": [{"text": _build_gemini_prompt(payload)}]}],
             "generationConfig": {
                 "temperature": 0.1,
@@ -66,18 +79,26 @@ class LLMJudge:
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8", errors="replace"))
-            parsed = _parse_jsonish(_extract_gemini_text(result))
+                raw_api_response = response.read().decode("utf-8", errors="replace")
+            result = json.loads(raw_api_response)
+            raw_model_text = _extract_gemini_text(result)
+            parsed = _parse_jsonish(raw_model_text)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:400]
             fallback.error = f"Gemini API HTTP {exc.code}: {detail}"
             return fallback
-        except (KeyError, IndexError, json.JSONDecodeError, TimeoutError, OSError) as exc:
+        except json.JSONDecodeError as exc:
+            raw = locals().get("raw_api_response", "")
+            _save_raw_response(raw)
+            fallback.error = f"Gemini API wrapper JSON 파싱 실패: {exc}. response preview: {_preview(raw)}"
+            return fallback
+        except (KeyError, IndexError, TimeoutError, OSError) as exc:
             fallback.error = f"Gemini API 파싱/호출 실패: {exc}"
             return fallback
 
         if not parsed:
-            fallback.error = "Gemini API 응답을 JSON으로 파싱하지 못했습니다."
+            _save_raw_response(raw_model_text)
+            fallback.error = f"Gemini API 응답을 JSON으로 파싱하지 못했습니다. response preview: {_preview(raw_model_text)}"
             return fallback
         return _judgement_from_parsed(parsed, fallback, provider="gemini-api", model=self.model)
 
@@ -159,6 +180,7 @@ def _build_gemini_prompt(payload: dict) -> str:
             "task": "pre-clone repo privacy exfiltration judgement",
             "instruction": (
                 "Decide whether the supplied evidence indicates developer credential or personal-data theft. "
+                "JSON만 반환, markdown 금지, 설명 금지. "
                 "Return only valid compact JSON with schema "
                 '{"verdict":"SAFE|SUSPICIOUS|MALICIOUS","confidence":0.0,'
                 '"reason":"","risk_adjustment":0,"evidence":[]}. '
@@ -180,20 +202,56 @@ def _extract_gemini_text(payload: dict) -> str:
 
 
 def _parse_jsonish(text: str) -> dict | None:
+    for candidate in _json_candidates(text):
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, str):
+                parsed = json.loads(parsed)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _json_candidates(text: str) -> list[str]:
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").removeprefix("json").strip()
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
+    candidates: list[str] = []
+    for match in CODE_FENCE_RE.finditer(cleaned):
+        fenced = match.group(1).strip()
+        candidates.append(fenced)
+        object_match = JSON_OBJECT_RE.search(fenced)
+        if object_match:
+            candidates.append(object_match.group(0))
+    without_fences = CODE_FENCE_RE.sub(lambda match: match.group(1), cleaned).strip()
+    object_match = JSON_OBJECT_RE.search(without_fences)
+    if object_match:
+        candidates.append(object_match.group(0))
+    candidates.append(without_fences)
+    return _unique_text(candidates)
+
+
+def _save_raw_response(text: str) -> None:
     try:
-        parsed = json.loads(cleaned[start : end + 1])
-        if isinstance(parsed, str):
-            parsed = json.loads(parsed)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
+        RAW_RESPONSE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        RAW_RESPONSE_LOG.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _preview(text: str, limit: int = 300) -> str:
+    compact = " ".join(text.split())
+    return compact[:limit]
+
+
+def _unique_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _judgement_from_parsed(parsed: dict, fallback: LLMJudgement, provider: str, model: str) -> LLMJudgement:
